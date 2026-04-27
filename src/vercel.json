@@ -1,0 +1,10 @@
+{
+  "rewrites": [
+    {
+      "source": "/a/:id",
+      "destination": "/api/redirect?id=:id"
+    }
+  ],
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist"
+}
