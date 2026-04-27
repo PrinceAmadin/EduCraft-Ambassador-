@@ -38,7 +38,7 @@ const ambassadors: AmbassadorData = {
   // ── General Ambassador Slots (redirect system) ─────────────────────────────
   slots: {
     "001": { name: "Admins",          school: "Co-founders", status: "active" },
-    "002": { name: "Nnouvosa Zoe",    school: "UNIBEN",      status: "active" },
+    "002": { name: "Noruwosa Zoe",    school: "UNIBEN",      status: "active" },
     "003": { name: "Cassandra",       school: "DELSU",       status: "active" },
     "004": { name: "Marong",          school: "EUI",         status: "active" },
     "005": { name: "Chidinma",        school: "EUI",         status: "active" },
