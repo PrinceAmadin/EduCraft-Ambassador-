@@ -1,8 +1,8 @@
-// data/ambassadors.ts
-// ✏️ EDIT THIS FILE to manage your ambassadors
-// - Change "status" to "vacant" when someone leaves
-// - Update "name" when someone new takes the slot
-// - Add new slots by adding new entries to the slots object
+// src/ambassadors.ts
+// ✏️ THE ONLY FILE YOU EVER NEED TO EDIT
+// - Set status to "vacant" when an ambassador leaves
+// - Update name when someone new takes the slot
+// - Add new entries to add more slots
 
 export interface AmbassadorSlot {
   name: string;
@@ -15,7 +15,7 @@ export interface AmbassadorData {
 }
 
 const ambassadors: AmbassadorData = {
-  // ✏️ Replace with EduCraft's real WhatsApp number (no + sign)
+  // ✏️ EduCraft's WhatsApp number — no + sign, include country code
   educraft_whatsapp: "2347063421088",
 
   slots: {
