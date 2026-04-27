@@ -31,7 +31,7 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
   // --- Valid active slot → build WhatsApp URL and redirect ---
   const phone   = ambassadors.educraft_whatsapp;
   const message = encodeURIComponent(
-    `Hello EduCraft! I was referred by EduCraftA-${id}. I'd like to place an order.`
+    `Hello EduCraft! I was referred by EduCraftA-${id}. I'd like to place an order on the following Services.`
   );
 
   const whatsappURL = `https://wa.me/${phone}?text=${message}`;
