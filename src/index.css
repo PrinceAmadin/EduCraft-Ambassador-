@@ -1,0 +1,14 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { -webkit-font-smoothing: antialiased; }
+
+/* Mobile: hide desktop nav, show hamburger */
+@media (max-width: 640px) {
+  [data-desktop-nav] { display: none !important; }
+  [data-hamburger]   { display: flex !important; }
+}
+
+/* Desktop: hide hamburger */
+@media (min-width: 641px) {
+  [data-hamburger]   { display: none !important; }
+  [data-mobile-menu] { display: none !important; }
+}
