@@ -21,5 +21,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "api/redirect.ts"]
+  "include": ["src", "api/redirect.ts", "tsconfig.json"]
 }
