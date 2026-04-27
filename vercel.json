@@ -1,8 +1,10 @@
 {
   "rewrites": [
-    { "source": "/EduCraftA/:id", "destination": "/api/redirect?id=:id" },
-    { "source": "/a/:id",         "destination": "/api/redirect?id=:id" }
+    { "source": "/EduCraftA/:id", "destination": "/api/redirect?id=:id&type=ambassador" },
+    { "source": "/ECCA/:id",      "destination": "/api/redirect?id=:id&type=ecca" },
+    { "source": "/ECSA/:id",      "destination": "/api/redirect?id=:id&type=ecsa" }
   ],
   "buildCommand": "npm run build",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "framework": "vite"
 }
