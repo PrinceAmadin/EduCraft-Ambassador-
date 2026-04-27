@@ -1,9 +1,15 @@
 // src/AdminDashboard.tsx
-import { useState, useMemo, useEffect } from "react";
-import ambassadors from "./ambassadors";
-import type { AmbassadorSlot, CoreAmbassador, SubAmbassador } from "./ambassadors";
+// 🔑 KEY ARCHITECTURE: liveData state is the single source of truth.
+//    ALL tabs (Ambassadors, Schools, Core, Sub, Manage) read from liveData.
+//    Edits in Manage → liveData updates → ALL tabs re-render instantly.
+//    Deploy button → pushes both files to GitHub → Vercel redeploys in ~30s.
+
+import { useState, useMemo, useEffect, useCallback } from "react";
+import seedAmbassadors from "./ambassadors";
+import type { AmbassadorData, AmbassadorSlot, CoreAmbassador, SubAmbassador } from "./ambassadors";
 import logoImage from "../public/logo.png";
 
+// ── Brand Colors ───────────────────────────────────────────────────────────────
 const C = {
   yellow:     "#fbdb21",
   yellowDark: "#E0B846",
@@ -12,60 +18,66 @@ const C = {
   white:      "#ffffff",
   milk:       "#FFF9ED",
   milkDark:   "#F0EBD8",
+  red:        "#ef4444",
+  redLight:   "#fef2f2",
 };
 
-type TabType = "ambassadors" | "schools" | "core" | "sub" | "manage";
-type FilterType = "all" | "active" | "vacant";
+// ── Types ──────────────────────────────────────────────────────────────────────
+type TabType     = "ambassadors" | "schools" | "core" | "sub" | "manage";
+type FilterType  = "all" | "active" | "vacant";
+type DeployState = "idle" | "deploying" | "success" | "error";
 interface SlotRow { id: string; slot: AmbassadorSlot; }
 
-// ── School full names ──────────────────────────────────────────────────────────
+// ── School display names ───────────────────────────────────────────────────────
 const SCHOOL_NAMES: Record<string, string> = {
   "EUI":    "Edo State University",
   "UNIBEN": "University of Benin",
   "AAU":    "Ambrose Aliu University",
   "DELSU":  "Delta State University",
   "ECU":    "Edwin Clark University",
-  "SDU":    "University of Southern Denmark",
+  "SDU":    "Univ. of Southern Denmark",
   "UNILAG": "University of Lagos",
   "PG":     "Postgraduate",
   "Admin":  "Administration",
 };
 
-// ── Local-storage key for manage edits ────────────────────────────────────────
-const LS_KEY = "educraft_manage_slots";
+// ── Local storage helpers ──────────────────────────────────────────────────────
+const LS_DATA   = "educraft_live_data_v4";
+const LS_GH     = "educraft_github_settings";
 
-type EditableSlots = Record<string, { name: string; school: string; status: "active" | "vacant" }>;
-
-function loadEdits(): EditableSlots | null {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+function loadData(): AmbassadorData | null {
+  try { const r = localStorage.getItem(LS_DATA); return r ? JSON.parse(r) : null; }
+  catch { return null; }
 }
-function saveEdits(data: EditableSlots) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch { /* noop */ }
+function saveData(d: AmbassadorData) {
+  try { localStorage.setItem(LS_DATA, JSON.stringify(d)); } catch { /* noop */ }
+}
+function loadGH() {
+  try { const r = localStorage.getItem(LS_GH); return r ? JSON.parse(r) : { owner: "", repo: "", token: "" }; }
+  catch { return { owner: "", repo: "", token: "" }; }
+}
+function saveGH(g: { owner: string; repo: string; token: string }) {
+  try { localStorage.setItem(LS_GH, JSON.stringify(g)); } catch { /* noop */ }
 }
 
-// ── Code generator ─────────────────────────────────────────────────────────────
-function generateAmbassadorsCode(slots: EditableSlots, core: CoreAmbassador[], sub: SubAmbassador[], phone: string): string {
-  const slotLines = Object.entries(slots).map(([id, s]) => {
-    const name   = s.name   ? `"${s.name}"` : `""`;
-    const school = s.school ? `"${s.school}"` : `""`;
-    const status = `"${s.status}"`;
-    const pad    = (str: string, len: number) => str.padEnd(len);
-    return `    "${id}": { name: ${pad(name + ",", 22)} school: ${pad(school + ",", 14)} status: ${status} },`;
+// ── Code Generators ────────────────────────────────────────────────────────────
+function generateAmbassadorsTS(d: AmbassadorData): string {
+  const slotLines = Object.entries(d.slots).map(([id, s]) => {
+    const nm = JSON.stringify(s.name);
+    const sc = JSON.stringify(s.school);
+    return `    "${id}": { name: ${nm.padEnd(22)}, school: ${sc.padEnd(14)}, status: "${s.status}" },`;
   }).join("\n");
 
-  const coreLines = core.map(c =>
+  const coreLines = d.coreAmbassadors.map(c =>
     `    { id: "${c.id}", name: "${c.name}", school: "${c.school}", percentage: ${c.percentage} },`
   ).join("\n");
 
-  const subLines = sub.map(s =>
+  const subLines = d.subAmbassadors.map(s =>
     `    { id: "${s.id}", name: "${s.name}", school: "${s.school}", percentage: ${s.percentage}, coreId: "${s.coreId}" },`
   ).join("\n");
 
   return `// src/ambassadors.ts
-// ✏️ THE FILE YOU EDIT to manage all ambassador data
+// ✏️ Managed by EduCraft Admin Panel — do not edit manually
 
 export interface AmbassadorSlot {
   name: string;
@@ -96,7 +108,7 @@ export interface AmbassadorData {
 }
 
 const ambassadors: AmbassadorData = {
-  educraft_whatsapp: "${phone}",
+  educraft_whatsapp: "${d.educraft_whatsapp}",
 
   slots: {
 ${slotLines}
@@ -115,8 +127,152 @@ export default ambassadors;
 `;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+function generateRedirectTS(d: AmbassadorData): string {
+  const slotLines = Object.entries(d.slots).map(([id, s]) => {
+    const nm = JSON.stringify(s.name);
+    const sc = JSON.stringify(s.school);
+    return `  "${id}": { name: ${nm}, school: ${sc}, status: "${s.status}" },`;
+  }).join("\n");
+
+  const coreLines = d.coreAmbassadors.map(c =>
+    `  "${c.id}": { name: "${c.name}", school: "${c.school}" },`
+  ).join("\n");
+
+  const subLines = d.subAmbassadors.map(s =>
+    `  "${s.id}": { name: "${s.name}", school: "${s.school}", coreId: "${s.coreId}" },`
+  ).join("\n");
+
+  return `// api/redirect.ts — Auto-generated by EduCraft Admin Panel
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+const EDUCRAFT_WHATSAPP = "${d.educraft_whatsapp}";
+
+const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {
+${slotLines}
+};
+
+const CORE_AMBASSADORS: Record<string, { name: string; school: string }> = {
+${coreLines}
+};
+
+const SUB_AMBASSADORS: Record<string, { name: string; school: string; coreId: string }> = {
+${subLines}
+};
+
+export default function handler(req: VercelRequest, res: VercelResponse): void {
+  const id   = req.query.id   as string | undefined;
+  const type = req.query.type as string | undefined;
+
+  if (!id) { res.status(400).send(errPage("No slot ID provided.")); return; }
+
+  if (type === "ecca") {
+    const core = CORE_AMBASSADORS[id];
+    if (!core) { res.status(404).send(errPage("Core Ambassador link not found.")); return; }
+    const msg = encodeURIComponent(\`Hi EduCraft! I was brought in by \${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. 🎓\`);
+    res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${msg}\`);
+    return;
+  }
+
+  if (type === "ecsa") {
+    const sub = SUB_AMBASSADORS[id];
+    if (!sub) { res.status(404).send(errPage("Sub-Ambassador link not found.")); return; }
+    const core = CORE_AMBASSADORS[sub.coreId];
+    const via  = core ? \` (via \${core.name})\` : "";
+    const msg  = encodeURIComponent(\`Hi EduCraft! I was referred by \${sub.name}\${via}. I'd like to place an order on the following Services:\`);
+    res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${msg}\`);
+    return;
+  }
+
+  const slot = SLOTS[id];
+  if (!slot) { res.status(404).send(errPage("This ambassador link does not exist.")); return; }
+
+  const msg = slot.status === "vacant" || !slot.name
+    ? encodeURIComponent("Hi EduCraft! I'd like to place an order on the following Services:")
+    : encodeURIComponent(\`Hi EduCraft! I was referred by \${slot.name}. I'd like to place an order on the following Services:\`);
+
+  res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${msg}\`);
+}
+
+function errPage(body: string): string {
+  return \`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>EduCraft</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',sans-serif;background:#FFF9ED;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}.card{background:#fff;border:2px solid #E0B846;border-radius:16px;padding:48px 40px;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(13,87,83,.10)}.icon{font-size:2.5rem;margin-bottom:16px}h1{font-size:1.3rem;margin-bottom:12px;color:#ef4444}p{color:#0D5753;line-height:1.6;font-size:.95rem}.brand{margin-top:24px;font-size:.75rem;color:#12827c;font-weight:700;letter-spacing:.05em}</style></head><body><div class="card"><div class="icon">🎓</div><h1>❌ Link Error</h1><p>\${body}</p><div class="brand">EDUCRAFT</div></div></body></html>\`;
+}
+`;
+}
+
+// ── GitHub Deploy ──────────────────────────────────────────────────────────────
+async function githubDeploy(
+  owner: string,
+  repo: string,
+  token: string,
+  liveData: AmbassadorData,
+  onStatus: (msg: string) => void
+): Promise<void> {
+  const headers = {
+    "Authorization": `token ${token}`,
+    "Accept": "application/vnd.github.v3+json",
+    "Content-Type": "application/json",
+  };
+  const base = `https://api.github.com/repos/${owner}/${repo}/contents`;
+
+  const toBase64 = (str: string) => btoa(unescape(encodeURIComponent(str)));
+
+  const getFileSHA = async (path: string) => {
+    const res = await fetch(`${base}/${path}`, { headers });
+    if (!res.ok) throw new Error(`Cannot find ${path} in repo. Check your settings.`);
+    const json = await res.json();
+    return json.sha as string;
+  };
+
+  const putFile = async (path: string, content: string, sha: string) => {
+    const res = await fetch(`${base}/${path}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        message: "🤖 Update ambassador data via EduCraft Admin Panel",
+        content: toBase64(content),
+        sha,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.message || `Failed to update ${path}`);
+    }
+  };
+
+  onStatus("📡 Connecting to GitHub...");
+  const aSHA = await getFileSHA("src/ambassadors.ts");
+  onStatus("📝 Updating ambassadors.ts...");
+  await putFile("src/ambassadors.ts", generateAmbassadorsTS(liveData), aSHA);
+
+  onStatus("📝 Updating api/redirect.ts...");
+  const rSHA = await getFileSHA("api/redirect.ts");
+  await putFile("api/redirect.ts", generateRedirectTS(liveData), rSHA);
+
+  onStatus("✅ Both files pushed! Vercel is rebuilding now (~30s)...");
+}
+
+// ── Next available slot ID ─────────────────────────────────────────────────────
+function nextSlotId(slots: Record<string, AmbassadorSlot>): string {
+  const nums = Object.keys(slots).map(k => parseInt(k, 10)).filter(n => !isNaN(n));
+  const max  = nums.length ? Math.max(...nums) : 0;
+  return String(max + 1).padStart(3, "0");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ══════════════════════════════════════════════════════════════════════════════
 export default function AdminDashboard() {
+  // ── Single source of truth ────────────────────────────────────────────────
+  const [liveData, setLiveDataRaw] = useState<AmbassadorData>(() =>
+    loadData() ?? { ...seedAmbassadors }
+  );
+
+  const setLiveData = useCallback((next: AmbassadorData) => {
+    setLiveDataRaw(next);
+    saveData(next);
+  }, []);
+
+  // ── UI state ──────────────────────────────────────────────────────────────
   const [tab,       setTab]       = useState<TabType>("ambassadors");
   const [filter,    setFilter]    = useState<FilterType>("all");
   const [search,    setSearch]    = useState("");
@@ -124,25 +280,28 @@ export default function AdminDashboard() {
   const [menuOpen,  setMenuOpen]  = useState(false);
   const [isMobile,  setIsMobile]  = useState(window.innerWidth <= 640);
 
-  // Manage tab state
-  const [editSlots,  setEditSlots]  = useState<EditableSlots>(() => {
-    const saved = loadEdits();
-    if (saved) return saved;
-    // seed from ambassadors.ts
-    const seed: EditableSlots = {};
-    Object.entries(ambassadors.slots).forEach(([id, s]) => {
-      seed[id] = { name: s.name, school: s.school, status: s.status };
-    });
-    return seed;
-  });
+  // ── Manage: edit existing ─────────────────────────────────────────────────
   const [editingId,   setEditingId]   = useState<string | null>(null);
   const [editName,    setEditName]    = useState("");
   const [editSchool,  setEditSchool]  = useState("");
   const [editStatus,  setEditStatus]  = useState<"active" | "vacant">("active");
-  const [showCode,    setShowCode]    = useState(false);
-  const [codeCopied,  setCodeCopied]  = useState(false);
   const [manageSearch, setManageSearch] = useState("");
-  const [unsaved,     setUnsaved]     = useState(false);
+
+  // ── Manage: add new ambassador ────────────────────────────────────────────
+  const [showAddForm,   setShowAddForm]   = useState(false);
+  const [newId,         setNewId]         = useState("");
+  const [newName,       setNewName]       = useState("");
+  const [newSchool,     setNewSchool]     = useState("");
+  const [newStatus,     setNewStatus]     = useState<"active" | "vacant">("active");
+  const [addError,      setAddError]      = useState("");
+
+  // ── GitHub deploy ─────────────────────────────────────────────────────────
+  const [gh, setGhRaw] = useState(loadGH());
+  const [deployState, setDeployState] = useState<DeployState>("idle");
+  const [deployMsg,   setDeployMsg]   = useState("");
+  const [showGhSettings, setShowGhSettings] = useState(false);
+
+  const setGh = (next: typeof gh) => { setGhRaw(next); saveGH(next); };
 
   useEffect(() => {
     const handler = () => setIsMobile(window.innerWidth <= 640);
@@ -150,96 +309,107 @@ export default function AdminDashboard() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  const baseURL = typeof window !== "undefined" ? window.location.origin : "";
+  const baseURL = window.location.origin;
 
-  // ── Slot filtering ────────────────────────────────────────────────────────
-  const slots: SlotRow[] = useMemo(() =>
-    Object.entries(ambassadors.slots)
+  // ── Computed values ───────────────────────────────────────────────────────
+  const totalActive = Object.values(liveData.slots).filter(s => s.status === "active").length;
+  const totalVacant = Object.values(liveData.slots).filter(s => s.status === "vacant").length;
+  const total       = Object.keys(liveData.slots).length;
+
+  const filteredSlots: SlotRow[] = useMemo(() =>
+    Object.entries(liveData.slots)
       .filter(([id, slot]) => {
-        const matchesFilter = filter === "all" || slot.status === filter;
-        const matchesSearch =
-          id.includes(search) ||
-          slot.name.toLowerCase().includes(search.toLowerCase()) ||
-          slot.school.toLowerCase().includes(search.toLowerCase());
-        return matchesFilter && matchesSearch;
+        const ok = filter === "all" || slot.status === filter;
+        const q  = search.toLowerCase();
+        return ok && (!q || id.includes(q) || slot.name.toLowerCase().includes(q) || slot.school.toLowerCase().includes(q));
       })
       .map(([id, slot]) => ({ id, slot })),
-  [filter, search]);
+  [liveData.slots, filter, search]);
 
-  const totalActive = Object.values(ambassadors.slots).filter(s => s.status === "active").length;
-  const totalVacant = Object.values(ambassadors.slots).filter(s => s.status === "vacant").length;
-  const total       = Object.keys(ambassadors.slots).length;
-
-  // ── School stats ──────────────────────────────────────────────────────────
   const schoolStats = useMemo(() => {
     const map: Record<string, { active: number; vacant: number }> = {};
-    Object.values(ambassadors.slots).forEach(slot => {
-      const key = slot.school || "—";
-      if (!map[key]) map[key] = { active: 0, vacant: 0 };
-      if (slot.status === "active") map[key].active++;
-      else map[key].vacant++;
+    Object.values(liveData.slots).forEach(slot => {
+      const k = slot.school || "—";
+      if (!map[k]) map[k] = { active: 0, vacant: 0 };
+      slot.status === "active" ? map[k].active++ : map[k].vacant++;
     });
     return Object.entries(map).sort((a, b) => (b[1].active + b[1].vacant) - (a[1].active + a[1].vacant));
-  }, []);
+  }, [liveData.slots]);
 
-  // ── Copy helpers ──────────────────────────────────────────────────────────
-  const copyLink = (id: string, prefix = "EduCraftA") => {
-    const key = `${prefix}-${id}`;
-    navigator.clipboard.writeText(`${baseURL}/${prefix}/${id}`);
+  const manageRows = useMemo(() =>
+    Object.entries(liveData.slots).filter(([id, s]) => {
+      const q = manageSearch.toLowerCase();
+      return !q || id.includes(q) || s.name.toLowerCase().includes(q) || s.school.toLowerCase().includes(q);
+    }),
+  [liveData.slots, manageSearch]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const copyLink = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
     setCopied(key);
     setTimeout(() => setCopied(null), 2000);
   };
 
-  // ── Manage tab helpers ────────────────────────────────────────────────────
   const startEdit = (id: string) => {
-    const s = editSlots[id];
-    setEditingId(id);
-    setEditName(s.name);
-    setEditSchool(s.school);
-    setEditStatus(s.status);
+    const slot = liveData.slots[id];
+    setEditingId(id); setEditName(slot.name); setEditSchool(slot.school); setEditStatus(slot.status);
   };
 
   const saveEdit = () => {
     if (!editingId) return;
-    const updated = { ...editSlots, [editingId]: { name: editName, school: editSchool, status: editStatus } };
-    setEditSlots(updated);
-    saveEdits(updated);
+    setLiveData({
+      ...liveData,
+      slots: { ...liveData.slots, [editingId]: { name: editName, school: editSchool, status: editStatus } },
+    });
     setEditingId(null);
-    setUnsaved(true);
   };
 
-  const cancelEdit = () => setEditingId(null);
-
-  const generatedCode = useMemo(() =>
-    generateAmbassadorsCode(
-      editSlots,
-      ambassadors.coreAmbassadors,
-      ambassadors.subAmbassadors,
-      ambassadors.educraft_whatsapp
-    ),
-  [editSlots]);
-
-  const copyCode = () => {
-    navigator.clipboard.writeText(generatedCode);
-    setCodeCopied(true);
-    setTimeout(() => setCodeCopied(false), 3000);
+  const openAddForm = () => {
+    setNewId(nextSlotId(liveData.slots));
+    setNewName(""); setNewSchool(""); setNewStatus("active"); setAddError("");
+    setShowAddForm(true);
   };
 
-  const manageRows = useMemo(() =>
-    Object.entries(editSlots).filter(([id, s]) => {
-      const q = manageSearch.toLowerCase();
-      return !q || id.includes(q) || s.name.toLowerCase().includes(q) || s.school.toLowerCase().includes(q);
-    }),
-  [editSlots, manageSearch]);
+  const saveNewAmbassador = () => {
+    const id = newId.trim().padStart(3, "0");
+    if (!id)        { setAddError("Slot ID is required."); return; }
+    if (!newName.trim()) { setAddError("Name is required."); return; }
+    if (liveData.slots[id]) { setAddError(`Slot ${id} already exists. Choose a different ID.`); return; }
+    setLiveData({
+      ...liveData,
+      slots: { ...liveData.slots, [id]: { name: newName.trim(), school: newSchool.trim(), status: newStatus } },
+    });
+    setShowAddForm(false);
+    setAddError("");
+  };
 
+  const handleDeploy = async () => {
+    if (!gh.owner || !gh.repo || !gh.token) {
+      setShowGhSettings(true);
+      setDeployMsg("⚠️ Please fill in your GitHub settings below first.");
+      return;
+    }
+    setDeployState("deploying");
+    setDeployMsg("Starting deploy...");
+    try {
+      await githubDeploy(gh.owner, gh.repo, gh.token, liveData, setDeployMsg);
+      setDeployState("success");
+    } catch (err) {
+      setDeployState("error");
+      setDeployMsg(`❌ ${(err as Error).message}`);
+    }
+  };
+
+  // ── Nav ───────────────────────────────────────────────────────────────────
   const navTabs: { key: TabType; label: string; icon: string }[] = [
     { key: "ambassadors", label: "Ambassadors", icon: "👥" },
     { key: "schools",     label: "Schools",     icon: "🏫" },
-    { key: "core",        label: "Core (ECCA)",  icon: "⭐" },
-    { key: "sub",         label: "Sub (ECSA)",   icon: "🔗" },
-    { key: "manage",      label: "Manage",       icon: "⚙️" },
+    { key: "core",        label: "Core (ECCA)", icon: "⭐" },
+    { key: "sub",         label: "Sub (ECSA)",  icon: "🔗" },
+    { key: "manage",      label: "Manage",      icon: "⚙️" },
   ];
 
+  // ═══════════════════════════════════════════════════════════════════════════
   return (
     <div style={s.page}>
 
@@ -252,39 +422,27 @@ export default function AdminDashboard() {
             <div style={s.logoSub}>Ambassador Panel</div>
           </div>
         </div>
-
-        {/* Desktop nav */}
         <nav style={{ ...s.desktopNav, display: isMobile ? "none" : "flex" }}>
           {navTabs.map(t => (
-            <button key={t.key}
-              style={{ ...s.navBtn, ...(tab === t.key ? s.navBtnActive : {}) }}
-              onClick={() => setTab(t.key)}
-            >
+            <button key={t.key} style={{ ...s.navBtn, ...(tab === t.key ? s.navBtnActive : {}) }}
+              onClick={() => setTab(t.key)}>
               {t.icon} {t.label}
-              {t.key === "manage" && unsaved && <span style={s.unsavedDot} />}
             </button>
           ))}
         </nav>
-
-        {/* Mobile hamburger */}
-        <button
-          style={{ ...s.hamburger, display: isMobile ? "flex" : "none" }}
-          onClick={() => setMenuOpen(o => !o)}
-        >
+        <button style={{ ...s.hamburger, display: isMobile ? "flex" : "none" }}
+          onClick={() => setMenuOpen(o => !o)}>
           {menuOpen ? "✕" : "☰"}
         </button>
       </header>
 
-      {/* Mobile menu */}
       {menuOpen && (
         <div style={s.mobileMenu}>
           {navTabs.map(t => (
             <button key={t.key}
               style={{ ...s.mobileMenuItem, ...(tab === t.key ? s.mobileMenuItemActive : {}) }}
-              onClick={() => { setTab(t.key); setMenuOpen(false); }}
-            >
+              onClick={() => { setTab(t.key); setMenuOpen(false); }}>
               {t.icon} {t.label}
-              {t.key === "manage" && unsaved && " 🟡"}
             </button>
           ))}
         </div>
@@ -306,20 +464,14 @@ export default function AdminDashboard() {
           </div>
 
           <div style={s.sectionLabel}>Ambassador Slots</div>
-
           <div style={s.controls}>
-            <input
-              style={s.searchInput}
-              placeholder="Search by name, slot ID, or school…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+            <input style={s.searchInput} placeholder="Search by name, slot ID, or school…"
+              value={search} onChange={e => setSearch(e.target.value)} />
             <div style={s.filterGroup}>
               {(["all", "active", "vacant"] as FilterType[]).map(f => (
                 <button key={f}
                   style={{ ...s.filterBtn, ...(filter === f ? s.filterBtnActive : {}) }}
-                  onClick={() => setFilter(f)}
-                >
+                  onClick={() => setFilter(f)}>
                   {f.charAt(0).toUpperCase() + f.slice(1)}
                 </button>
               ))}
@@ -336,14 +488,14 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {slots.map(({ id, slot }, i) => (
+                {filteredSlots.map(({ id, slot }, i) => (
                   <tr key={id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk }}>
                     <td style={s.td}><span style={s.rowNum}>{parseInt(id)}.</span></td>
                     <td style={s.td}><span style={s.slotId}>EduCraftA-{id}</span></td>
                     <td style={s.td}>
                       {slot.status === "active" && slot.name
-                        ? <span style={{ color: C.greenDark, fontWeight: 600 }}>{slot.name}</span>
-                        : <span style={{ color: "#bbb", fontStyle: "italic" }}>— Unassigned —</span>}
+                        ? <strong style={{ color: C.greenDark }}>{slot.name}</strong>
+                        : <em style={{ color: "#bbb" }}>— Unassigned —</em>}
                     </td>
                     <td style={s.td}><span style={s.schoolTag}>{slot.school || "—"}</span></td>
                     <td style={s.td}>
@@ -354,16 +506,15 @@ export default function AdminDashboard() {
                     <td style={s.td}><span style={s.linkText}>/EduCraftA/{id}</span></td>
                     <td style={s.td}>
                       <button
-                        style={{ ...s.copyBtn, ...(copied === `EduCraftA-${id}` ? s.copyBtnDone : {}) }}
-                        onClick={() => copyLink(id)}
-                        disabled={slot.status === "vacant"}
-                      >
-                        {copied === `EduCraftA-${id}` ? "✓" : "Copy"}
+                        style={{ ...s.copyBtn, ...(copied === `a-${id}` ? s.copyBtnDone : {}) }}
+                        onClick={() => copyLink(`${baseURL}/EduCraftA/${id}`, `a-${id}`)}
+                        disabled={slot.status === "vacant"}>
+                        {copied === `a-${id}` ? "✓" : "Copy"}
                       </button>
                     </td>
                   </tr>
                 ))}
-                {slots.length === 0 && (
+                {filteredSlots.length === 0 && (
                   <tr><td colSpan={7} style={s.emptyRow}>No slots match your search.</td></tr>
                 )}
               </tbody>
@@ -411,36 +562,34 @@ export default function AdminDashboard() {
           <div style={s.infoBox}>
             <span style={s.infoIcon}>⭐</span>
             <div>
-              <p>Core Ambassadors earn their base % per job they bring. They can recruit Sub-Ambassadors who earn <strong>7%</strong> per job — while the Core earns an extra <strong>3%</strong> per Sub job.</p>
-              <p style={{ marginTop: 8 }}>Each Core has a unique <strong>Recruitment Link (ECCA)</strong> — share this with potential Sub-Ambassadors to join under them.</p>
+              <p>Core Ambassadors earn their base % per job. They recruit Sub-Ambassadors who earn <strong>7%</strong> per job, while the Core earns <strong>3%</strong> extra per Sub job.</p>
+              <p style={{ marginTop: 6 }}>Share the <strong>Recruit Link</strong> with potential Sub-Ambassadors to join under a Core Ambassador.</p>
             </div>
           </div>
           <div style={s.tableWrapper}>
             <table style={s.table}>
               <thead>
                 <tr style={s.thead}>
-                  {["No.", "ID", "Name", "School", "Base %", "Subs", "Total %", "Recruit Link", "Copy"].map(h => (
+                  {["No.", "ID", "Name", "School", "Base %", "Subs", "Total %", "Recruit Link", ""].map(h => (
                     <th key={h} style={s.th}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {ambassadors.coreAmbassadors.map((a, i) => {
-                  const subCount     = ambassadors.subAmbassadors.filter(s => s.coreId === a.id).length;
+                {liveData.coreAmbassadors.map((a, i) => {
+                  const subCount     = liveData.subAmbassadors.filter(sb => sb.coreId === a.id).length;
                   const totalEarning = a.percentage + (subCount * 3);
-                  const copyKey      = `ecca-${a.id}`;
+                  const ck           = `ecca-${a.id}`;
                   return (
                     <tr key={a.id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk }}>
                       <td style={s.td}><span style={s.rowNum}>{i + 1}.</span></td>
                       <td style={s.td}><span style={s.slotId}>{a.id}</span></td>
-                      <td style={s.td}><span style={{ color: C.greenDark, fontWeight: 700 }}>{a.name}</span></td>
+                      <td style={s.td}><strong style={{ color: C.greenDark }}>{a.name}</strong></td>
                       <td style={s.td}><span style={s.schoolTag}>{a.school}</span></td>
-                      <td style={s.td}>
-                        <span style={{ ...s.badge, background: C.green, color: C.white }}>{a.percentage}%</span>
-                      </td>
+                      <td style={s.td}><span style={{ ...s.badge, background: C.green, color: C.white }}>{a.percentage}%</span></td>
                       <td style={s.td}>
                         <span style={{ color: subCount > 0 ? C.green : "#bbb", fontWeight: subCount > 0 ? 700 : 400 }}>
-                          {subCount > 0 ? `${subCount} sub${subCount > 1 ? "s" : ""}` : "—"}
+                          {subCount > 0 ? `${subCount}` : "—"}
                         </span>
                       </td>
                       <td style={s.td}>
@@ -451,14 +600,9 @@ export default function AdminDashboard() {
                       <td style={s.td}><span style={s.linkText}>/ECCA/{a.id}</span></td>
                       <td style={s.td}>
                         <button
-                          style={{ ...s.copyBtn, ...(copied === copyKey ? s.copyBtnDone : {}) }}
-                          onClick={() => {
-                            navigator.clipboard.writeText(`${baseURL}/ECCA/${a.id}`);
-                            setCopied(copyKey);
-                            setTimeout(() => setCopied(null), 2000);
-                          }}
-                        >
-                          {copied === copyKey ? "✓" : "Copy"}
+                          style={{ ...s.copyBtn, ...(copied === ck ? s.copyBtnDone : {}) }}
+                          onClick={() => copyLink(`${baseURL}/ECCA/${a.id}`, ck)}>
+                          {copied === ck ? "✓" : "Copy"}
                         </button>
                       </td>
                     </tr>
@@ -473,36 +617,34 @@ export default function AdminDashboard() {
             TAB: SUB AMBASSADORS
         ══════════════════════════════════════════════════════ */}
         {tab === "sub" && (<>
-          <div style={s.sectionLabel}>Sub-Ambassadors (ECSA) — Under Core Partners</div>
+          <div style={s.sectionLabel}>Sub-Ambassadors (ECSA)</div>
           <div style={s.infoBox}>
             <span style={s.infoIcon}>🔗</span>
             <div>
-              <p>Sub-Ambassadors earn <strong>7%</strong> per job they bring. Their Core Ambassador earns an additional <strong>3%</strong> on every job a Sub brings in.</p>
-              <p style={{ marginTop: 8 }}>Each Sub has a unique <strong>Client Referral Link (ECSA)</strong> — share with potential clients.</p>
+              <p>Sub-Ambassadors earn <strong>7%</strong> per job. Their Core earns <strong>3%</strong> per Sub job.</p>
+              <p style={{ marginTop: 6 }}>Share the <strong>Client Link</strong> with potential clients.</p>
             </div>
           </div>
           <div style={s.tableWrapper}>
             <table style={s.table}>
               <thead>
                 <tr style={s.thead}>
-                  {["No.", "ID", "Name", "School", "%", "Under (Core)", "Client Link", "Copy"].map(h => (
+                  {["No.", "ID", "Name", "School", "%", "Under (Core)", "Client Link", ""].map(h => (
                     <th key={h} style={s.th}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {ambassadors.subAmbassadors.map((a, i) => {
-                  const core    = ambassadors.coreAmbassadors.find(c => c.id === a.coreId);
-                  const copyKey = `ecsa-${a.id}`;
+                {liveData.subAmbassadors.map((a, i) => {
+                  const core = liveData.coreAmbassadors.find(c => c.id === a.coreId);
+                  const ck   = `ecsa-${a.id}`;
                   return (
                     <tr key={a.id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk }}>
                       <td style={s.td}><span style={s.rowNum}>{i + 1}.</span></td>
                       <td style={s.td}><span style={s.slotId}>{a.id}</span></td>
-                      <td style={s.td}><span style={{ color: C.greenDark, fontWeight: 700 }}>{a.name}</span></td>
+                      <td style={s.td}><strong style={{ color: C.greenDark }}>{a.name}</strong></td>
                       <td style={s.td}><span style={s.schoolTag}>{a.school}</span></td>
-                      <td style={s.td}>
-                        <span style={{ ...s.badge, background: C.yellowDark, color: C.greenDark }}>{a.percentage}%</span>
-                      </td>
+                      <td style={s.td}><span style={{ ...s.badge, background: C.yellowDark, color: C.greenDark }}>{a.percentage}%</span></td>
                       <td style={s.td}>
                         {core
                           ? <span style={{ color: C.green, fontWeight: 600 }}>⭐ {core.name}</span>
@@ -511,20 +653,15 @@ export default function AdminDashboard() {
                       <td style={s.td}><span style={s.linkText}>/ECSA/{a.id}</span></td>
                       <td style={s.td}>
                         <button
-                          style={{ ...s.copyBtn, ...(copied === copyKey ? s.copyBtnDone : {}) }}
-                          onClick={() => {
-                            navigator.clipboard.writeText(`${baseURL}/ECSA/${a.id}`);
-                            setCopied(copyKey);
-                            setTimeout(() => setCopied(null), 2000);
-                          }}
-                        >
-                          {copied === copyKey ? "✓" : "Copy"}
+                          style={{ ...s.copyBtn, ...(copied === ck ? s.copyBtnDone : {}) }}
+                          onClick={() => copyLink(`${baseURL}/ECSA/${a.id}`, ck)}>
+                          {copied === ck ? "✓" : "Copy"}
                         </button>
                       </td>
                     </tr>
                   );
                 })}
-                {ambassadors.subAmbassadors.length === 0 && (
+                {liveData.subAmbassadors.length === 0 && (
                   <tr><td colSpan={8} style={s.emptyRow}>No sub-ambassadors yet.</td></tr>
                 )}
               </tbody>
@@ -538,122 +675,189 @@ export default function AdminDashboard() {
         {tab === "manage" && (<>
           <div style={s.sectionLabel}>⚙️ Manage Ambassador Slots</div>
 
+          {/* ── How it works banner ── */}
           <div style={s.infoBox}>
             <span style={s.infoIcon}>💡</span>
             <div style={{ fontSize: "0.85rem", lineHeight: 1.7 }}>
-              Edit any slot below. Changes are saved <strong>locally</strong> in your browser. When done, click <strong>Generate Code</strong> → copy the code → paste into <code style={s.code}>src/ambassadors.ts</code> and <code style={s.code}>api/redirect.ts</code> → push to GitHub → Vercel redeploys in ~30s.
+              <strong>How this works:</strong> Edit or add ambassadors below — changes apply instantly across <em>all tabs and the dashboard</em>. To make links live for everyone, click <strong>🚀 Deploy to GitHub</strong>. Vercel will rebuild in ~30 seconds.
             </div>
           </div>
 
-          {/* Action bar */}
+          {/* ── Action bar ── */}
           <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" as const, alignItems: "center" }}>
-            <input
-              style={{ ...s.searchInput, maxWidth: 300 }}
-              placeholder="Search slots…"
-              value={manageSearch}
-              onChange={e => setManageSearch(e.target.value)}
-            />
-            <button
-              style={{ ...s.actionBtn, background: C.green, color: C.white, marginLeft: "auto" }}
-              onClick={() => setShowCode(c => !c)}
-            >
-              {showCode ? "Hide Code" : "📋 Generate Code"}
+            <input style={{ ...s.searchInput, maxWidth: 260 }}
+              placeholder="Search slots…" value={manageSearch} onChange={e => setManageSearch(e.target.value)} />
+            <button style={{ ...s.actionBtn, background: C.green, color: C.white }}
+              onClick={openAddForm}>
+              ➕ Add New Ambassador
             </button>
-            {unsaved && (
-              <span style={{ fontSize: "0.78rem", color: C.yellowDark, fontWeight: 700 }}>
-                ● Unsaved changes — generate code to apply
-              </span>
-            )}
+            <button
+              style={{
+                ...s.actionBtn,
+                background: deployState === "success" ? C.green : deployState === "error" ? C.red : C.greenDark,
+                color: C.yellow,
+                marginLeft: "auto",
+                opacity: deployState === "deploying" ? 0.7 : 1,
+              }}
+              onClick={handleDeploy}
+              disabled={deployState === "deploying"}>
+              {deployState === "deploying" ? "⏳ Deploying…" : deployState === "success" ? "✅ Deployed!" : deployState === "error" ? "❌ Retry Deploy" : "🚀 Deploy to GitHub"}
+            </button>
           </div>
 
-          {/* Code output panel */}
-          {showCode && (
-            <div style={s.codePanel}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <span style={{ fontWeight: 700, color: C.yellow, fontSize: "0.85rem" }}>
-                  📄 Generated ambassadors.ts — copy & paste into your project
-                </span>
-                <button
-                  style={{ ...s.actionBtn, background: codeCopied ? C.green : C.yellow, color: C.greenDark, padding: "6px 16px" }}
-                  onClick={copyCode}
-                >
-                  {codeCopied ? "✓ Copied!" : "Copy All"}
-                </button>
-              </div>
-              <pre style={s.codeBlock}>{generatedCode}</pre>
+          {/* ── Deploy status message ── */}
+          {deployMsg && (
+            <div style={{
+              ...s.statusBanner,
+              borderColor: deployState === "error" ? C.red : C.green,
+              background:  deployState === "error" ? C.redLight : C.white,
+              color:       deployState === "error" ? C.red : C.greenDark,
+            }}>
+              {deployMsg}
             </div>
           )}
 
-          {/* Edit form modal (inline) */}
-          {editingId && (
+          {/* ── GitHub Settings (collapsible) ── */}
+          <div style={s.settingsSection}>
+            <button style={s.settingsToggle} onClick={() => setShowGhSettings(g => !g)}>
+              🔑 GitHub Deploy Settings {showGhSettings ? "▲" : "▼"}
+            </button>
+            {showGhSettings && (
+              <div style={s.settingsBody}>
+                <p style={{ fontSize: "0.82rem", color: "#888", marginBottom: 14, lineHeight: 1.6 }}>
+                  Enter your GitHub credentials once. These are saved locally in your browser only — never sent anywhere except GitHub.
+                  <br />Need a token? Go to <strong>GitHub → Settings → Developer settings → Personal access tokens → Generate new token (classic)</strong> with <code>repo</code> scope.
+                </p>
+                {[
+                  { label: "GitHub Username / Org", key: "owner", placeholder: "e.g. PrinceAmadin" },
+                  { label: "Repository Name",       key: "repo",  placeholder: "e.g. EduCraft-Ambassador-" },
+                  { label: "Personal Access Token", key: "token", placeholder: "ghp_xxxxxxxxxxxx", type: "password" },
+                ].map(f => (
+                  <div key={f.key} style={{ marginBottom: 12 }}>
+                    <label style={s.formLabel}>{f.label}</label>
+                    <input
+                      style={s.formInput}
+                      type={f.type || "text"}
+                      placeholder={f.placeholder}
+                      value={gh[f.key as keyof typeof gh]}
+                      onChange={e => setGh({ ...gh, [f.key]: e.target.value })}
+                    />
+                  </div>
+                ))}
+                <button style={{ ...s.actionBtn, background: C.green, color: C.white, marginTop: 4 }}
+                  onClick={() => { saveGH(gh); setShowGhSettings(false); setDeployMsg("✅ Settings saved!"); }}>
+                  Save Settings
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Add New Ambassador Form ── */}
+          {showAddForm && (
             <div style={s.editCard}>
-              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 12, fontSize: "0.95rem" }}>
-                Editing Slot <span style={{ color: C.green }}>EduCraftA-{editingId}</span>
+              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 16, fontSize: "1rem" }}>
+                ➕ Add New Ambassador
               </div>
-              <div style={s.formRow}>
-                <label style={s.formLabel}>Name</label>
-                <input
-                  style={s.formInput}
-                  value={editName}
-                  onChange={e => setEditName(e.target.value)}
-                  placeholder="Ambassador name"
-                />
-              </div>
-              <div style={s.formRow}>
-                <label style={s.formLabel}>School</label>
-                <input
-                  style={s.formInput}
-                  value={editSchool}
-                  onChange={e => setEditSchool(e.target.value)}
-                  placeholder="EUI, UNIBEN, DELSU…"
-                />
-              </div>
-              <div style={s.formRow}>
-                <label style={s.formLabel}>Status</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {(["active", "vacant"] as const).map(st => (
-                    <button
-                      key={st}
-                      style={{
-                        ...s.filterBtn,
-                        ...(editStatus === st ? { background: st === "active" ? C.green : C.yellowDark, color: st === "active" ? C.white : C.greenDark, border: "none" } : {})
-                      }}
-                      onClick={() => setEditStatus(st)}
-                    >
-                      {st === "active" ? "● Active" : "○ Vacant"}
-                    </button>
-                  ))}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                <div>
+                  <label style={s.formLabel}>Slot ID (number)</label>
+                  <input style={s.formInput} value={newId} onChange={e => setNewId(e.target.value)} placeholder="e.g. 067" />
+                </div>
+                <div>
+                  <label style={s.formLabel}>Full Name</label>
+                  <input style={s.formInput} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Ambassador's name" />
+                </div>
+                <div>
+                  <label style={s.formLabel}>School</label>
+                  <input style={s.formInput} value={newSchool} onChange={e => setNewSchool(e.target.value)} placeholder="EUI, UNIBEN…" />
+                </div>
+                <div>
+                  <label style={s.formLabel}>Status</label>
+                  <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                    {(["active", "vacant"] as const).map(st => (
+                      <button key={st}
+                        style={{
+                          ...s.filterBtn,
+                          ...(newStatus === st ? { background: st === "active" ? C.green : C.yellowDark, color: st === "active" ? C.white : C.greenDark, border: "none" } : {}),
+                        }}
+                        onClick={() => setNewStatus(st)}>
+                        {st === "active" ? "● Active" : "○ Vacant"}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                <button style={{ ...s.actionBtn, background: C.green, color: C.white }} onClick={saveEdit}>
-                  ✓ Save
+              {addError && <p style={{ color: C.red, fontSize: "0.82rem", marginTop: 10 }}>⚠️ {addError}</p>}
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button style={{ ...s.actionBtn, background: C.green, color: C.white }} onClick={saveNewAmbassador}>
+                  ✓ Add Ambassador
                 </button>
-                <button style={{ ...s.actionBtn, background: C.milk, color: C.greenDark, border: `1.5px solid ${C.milkDark}` }} onClick={cancelEdit}>
+                <button style={{ ...s.actionBtn, background: C.milk, color: C.greenDark, border: `1.5px solid ${C.milkDark}` }}
+                  onClick={() => { setShowAddForm(false); setAddError(""); }}>
                   Cancel
                 </button>
               </div>
             </div>
           )}
 
-          {/* Slots table */}
+          {/* ── Edit existing form ── */}
+          {editingId && (
+            <div style={s.editCard}>
+              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 16 }}>
+                ✏️ Editing Slot <span style={{ color: C.green }}>EduCraftA-{editingId}</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                <div>
+                  <label style={s.formLabel}>Name</label>
+                  <input style={s.formInput} value={editName} onChange={e => setEditName(e.target.value)} placeholder="Ambassador's name" />
+                </div>
+                <div>
+                  <label style={s.formLabel}>School</label>
+                  <input style={s.formInput} value={editSchool} onChange={e => setEditSchool(e.target.value)} placeholder="EUI, UNIBEN…" />
+                </div>
+                <div>
+                  <label style={s.formLabel}>Status</label>
+                  <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                    {(["active", "vacant"] as const).map(st => (
+                      <button key={st}
+                        style={{
+                          ...s.filterBtn,
+                          ...(editStatus === st ? { background: st === "active" ? C.green : C.yellowDark, color: st === "active" ? C.white : C.greenDark, border: "none" } : {}),
+                        }}
+                        onClick={() => setEditStatus(st)}>
+                        {st === "active" ? "● Active" : "○ Vacant"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button style={{ ...s.actionBtn, background: C.green, color: C.white }} onClick={saveEdit}>✓ Save Changes</button>
+                <button style={{ ...s.actionBtn, background: C.milk, color: C.greenDark, border: `1.5px solid ${C.milkDark}` }} onClick={() => setEditingId(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Slots table ── */}
           <div style={s.tableWrapper}>
             <table style={s.table}>
               <thead>
                 <tr style={s.thead}>
-                  {["Slot", "Name", "School", "Status", ""].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
+                  {["Slot ID", "Name", "School", "Status", "Edit"].map(h => <th key={h} style={s.th}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {manageRows.map(([id, slot], i) => (
-                  <tr key={id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk, ...(editingId === id ? { outline: `2px solid ${C.green}` } : {}) }}>
+                  <tr key={id} style={{
+                    ...s.tr,
+                    background: i % 2 === 0 ? C.white : C.milk,
+                    outline: editingId === id ? `2px solid ${C.green}` : "none",
+                  }}>
                     <td style={s.td}><span style={s.slotId}>EduCraftA-{id}</span></td>
                     <td style={s.td}>
                       {slot.name
-                        ? <span style={{ color: C.greenDark, fontWeight: 600 }}>{slot.name}</span>
-                        : <span style={{ color: "#bbb", fontStyle: "italic" }}>— Vacant —</span>}
+                        ? <strong style={{ color: C.greenDark }}>{slot.name}</strong>
+                        : <em style={{ color: "#bbb" }}>— Vacant —</em>}
                     </td>
                     <td style={s.td}><span style={s.schoolTag}>{slot.school || "—"}</span></td>
                     <td style={s.td}>
@@ -664,8 +868,7 @@ export default function AdminDashboard() {
                     <td style={s.td}>
                       <button
                         style={{ ...s.copyBtn, ...(editingId === id ? { background: C.yellow, color: C.greenDark } : {}) }}
-                        onClick={() => editingId === id ? cancelEdit() : startEdit(id)}
-                      >
+                        onClick={() => editingId === id ? setEditingId(null) : startEdit(id)}>
                         {editingId === id ? "Editing…" : "✏️ Edit"}
                       </button>
                     </td>
@@ -675,19 +878,18 @@ export default function AdminDashboard() {
             </table>
           </div>
 
-          <p style={{ ...s.footerNote, marginTop: 16 }}>
-            Changes are stored locally. Use <strong>Generate Code</strong> → copy → paste into <code style={s.code}>src/ambassadors.ts</code> → push to GitHub.
+          <p style={{ ...s.footerNote, marginTop: 12 }}>
+            {Object.keys(liveData.slots).length} total slots · Edits saved locally · Click <strong>🚀 Deploy</strong> to push live
           </p>
         </>)}
 
-        <p style={s.footerNote}>
-          Edit <code style={s.code}>src/ambassadors.ts</code> & <code style={s.code}>api/redirect.ts</code> → push to GitHub → Vercel redeploys in ~30s
-        </p>
+        <p style={s.footerNote}>EduCraft Ambassador Panel · Powered by Vercel</p>
       </main>
     </div>
   );
 }
 
+// ── StatCard ──────────────────────────────────────────────────────────────────
 function StatCard({ label, value, color, bg }: { label: string; value: number | string; color: string; bg: string }) {
   return (
     <div style={{ borderRadius: 14, padding: "20px 22px", background: bg, border: `1.5px solid ${bg === "#FFF9ED" ? "#E0B846" : bg}`, boxShadow: "0 2px 8px rgba(0,0,0,0.07)" }}>
@@ -697,63 +899,63 @@ function StatCard({ label, value, color, bg }: { label: string; value: number | 
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
 const s: Record<string, React.CSSProperties> = {
-  page:        { minHeight: "100vh", background: C.milk, color: C.greenDark, fontFamily: "'Segoe UI', system-ui, sans-serif" },
-  header:      { background: C.greenDark, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
-  logo:        { display: "flex", alignItems: "center", gap: 12 },
-  logoImg:     { width: 44, height: 44, objectFit: "contain" },
-  logoTitle:   { fontSize: "1.1rem", fontWeight: 800, color: C.yellow },
-  logoSub:     { fontSize: "0.68rem", color: C.white, opacity: 0.75 },
-  desktopNav:  { display: "flex", gap: 6, flexWrap: "wrap" },
-  navBtn:      { background: "transparent", border: `1.5px solid rgba(255,255,255,0.2)`, color: C.white, borderRadius: 8, padding: "8px 14px", fontSize: "0.82rem", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap", position: "relative" },
-  navBtnActive: { background: C.yellow, border: `1.5px solid ${C.yellow}`, color: C.greenDark },
-  unsavedDot:  { position: "absolute", top: 4, right: 4, width: 6, height: 6, borderRadius: "50%", background: C.yellow },
-  hamburger:   { display: "flex", background: "transparent", border: `1.5px solid rgba(255,255,255,0.3)`, color: C.white, borderRadius: 8, padding: "8px 12px", fontSize: "1.1rem", cursor: "pointer" },
-  mobileMenu:  { background: C.greenDark, borderBottom: `3px solid ${C.yellow}`, display: "flex", flexDirection: "column", padding: "8px 16px 16px" },
+  page:          { minHeight: "100vh", background: C.milk, color: C.greenDark, fontFamily: "'Segoe UI', system-ui, sans-serif" },
+  header:        { background: C.greenDark, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
+  logo:          { display: "flex", alignItems: "center", gap: 12 },
+  logoImg:       { width: 44, height: 44, objectFit: "contain" },
+  logoTitle:     { fontSize: "1.1rem", fontWeight: 800, color: C.yellow },
+  logoSub:       { fontSize: "0.68rem", color: C.white, opacity: 0.75 },
+  desktopNav:    { display: "flex", gap: 6, flexWrap: "wrap" },
+  navBtn:        { background: "transparent", border: `1.5px solid rgba(255,255,255,0.2)`, color: C.white, borderRadius: 8, padding: "8px 14px", fontSize: "0.82rem", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" },
+  navBtnActive:  { background: C.yellow, border: `1.5px solid ${C.yellow}`, color: C.greenDark },
+  hamburger:     { display: "flex", background: "transparent", border: `1.5px solid rgba(255,255,255,0.3)`, color: C.white, borderRadius: 8, padding: "8px 12px", fontSize: "1.1rem", cursor: "pointer" },
+  mobileMenu:    { background: C.greenDark, borderBottom: `3px solid ${C.yellow}`, display: "flex", flexDirection: "column", padding: "8px 16px 16px" },
   mobileMenuItem: { background: "transparent", border: "none", borderBottom: `1px solid rgba(255,255,255,0.1)`, color: C.white, padding: "14px 8px", fontSize: "0.95rem", cursor: "pointer", textAlign: "left", fontWeight: 600 },
   mobileMenuItemActive: { color: C.yellow },
-  accentBar:   { height: 4, background: `linear-gradient(90deg, ${C.yellow}, ${C.yellowDark}, ${C.green})` },
-  main:        { padding: "24px 16px", maxWidth: 1200, margin: "0 auto" },
-  statsRow:    { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 28 },
-  sectionLabel: { fontSize: "0.68rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 12 },
-  controls:    { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" },
-  searchInput: { flex: 1, minWidth: 180, background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "10px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
-  filterGroup: { display: "flex", gap: 6, flexWrap: "wrap" },
-  filterBtn:   { background: C.white, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 8, padding: "9px 16px", fontSize: "0.82rem", cursor: "pointer", fontWeight: 600 },
+  accentBar:     { height: 4, background: `linear-gradient(90deg, ${C.yellow}, ${C.yellowDark}, ${C.green})` },
+  main:          { padding: "24px 16px", maxWidth: 1200, margin: "0 auto" },
+  statsRow:      { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 28 },
+  sectionLabel:  { fontSize: "0.68rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 12 },
+  controls:      { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" },
+  searchInput:   { flex: 1, minWidth: 180, background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "10px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
+  filterGroup:   { display: "flex", gap: 6, flexWrap: "wrap" },
+  filterBtn:     { background: C.white, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 8, padding: "9px 16px", fontSize: "0.82rem", cursor: "pointer", fontWeight: 600 },
   filterBtnActive: { background: C.green, border: `1.5px solid ${C.green}`, color: C.white },
-  tableWrapper: { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, overflowX: "auto", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", WebkitOverflowScrolling: "touch" },
-  table:       { width: "100%", borderCollapse: "collapse", minWidth: 500 },
-  thead:       { background: C.greenDark },
-  th:          { padding: "12px 14px", textAlign: "left", fontSize: "0.68rem", fontWeight: 700, color: C.yellow, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" },
-  tr:          { borderBottom: `1px solid ${C.milkDark}` },
-  td:          { padding: "11px 14px", fontSize: "0.85rem", verticalAlign: "middle" },
-  rowNum:      { color: "#bbb", fontSize: "0.78rem" },
-  slotId:      { fontFamily: "monospace", color: C.green, fontWeight: 700, fontSize: "0.82rem" },
-  schoolTag:   { background: C.milk, border: `1px solid ${C.milkDark}`, color: C.green, padding: "2px 8px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600 },
-  badge:       { fontSize: "0.72rem", fontWeight: 700, padding: "4px 10px", borderRadius: 999, display: "inline-block", whiteSpace: "nowrap" },
-  linkText:    { fontFamily: "monospace", color: C.yellowDark, fontSize: "0.78rem", fontWeight: 600 },
-  copyBtn:     { background: C.milk, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 6, padding: "5px 12px", fontSize: "0.78rem", cursor: "pointer", fontWeight: 700 },
-  copyBtnDone: { background: C.green, border: `1.5px solid ${C.green}`, color: C.white },
-  emptyRow:    { padding: 40, textAlign: "center", color: "#bbb" },
-  schoolGrid:  { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 },
-  schoolCard:  { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" },
+  tableWrapper:  { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, overflowX: "auto", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", WebkitOverflowScrolling: "touch" },
+  table:         { width: "100%", borderCollapse: "collapse", minWidth: 500 },
+  thead:         { background: C.greenDark },
+  th:            { padding: "12px 14px", textAlign: "left", fontSize: "0.68rem", fontWeight: 700, color: C.yellow, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" },
+  tr:            { borderBottom: `1px solid ${C.milkDark}` },
+  td:            { padding: "11px 14px", fontSize: "0.85rem", verticalAlign: "middle" },
+  rowNum:        { color: "#bbb", fontSize: "0.78rem" },
+  slotId:        { fontFamily: "monospace", color: C.green, fontWeight: 700, fontSize: "0.82rem" },
+  schoolTag:     { background: C.milk, border: `1px solid ${C.milkDark}`, color: C.green, padding: "2px 8px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600 },
+  badge:         { fontSize: "0.72rem", fontWeight: 700, padding: "4px 10px", borderRadius: 999, display: "inline-block", whiteSpace: "nowrap" },
+  linkText:      { fontFamily: "monospace", color: C.yellowDark, fontSize: "0.78rem", fontWeight: 600 },
+  copyBtn:       { background: C.milk, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 6, padding: "5px 12px", fontSize: "0.78rem", cursor: "pointer", fontWeight: 700 },
+  copyBtnDone:   { background: C.green, border: `1.5px solid ${C.green}`, color: C.white },
+  emptyRow:      { padding: 40, textAlign: "center", color: "#bbb" },
+  schoolGrid:    { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 },
+  schoolCard:    { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" },
   schoolCardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
-  schoolAbbr:  { fontSize: "1.2rem", fontWeight: 900, color: C.greenDark },
-  schoolName:  { fontSize: "0.75rem", color: "#888", marginTop: 2 },
-  schoolTotal: { fontSize: "2rem", fontWeight: 900, color: C.green },
-  progressBg:  { height: 8, background: C.milk, borderRadius: 999, overflow: "hidden", marginBottom: 10 },
-  progressFill: { height: "100%", background: C.green, borderRadius: 999, transition: "width 0.4s ease" },
-  schoolFooter: { display: "flex", justifyContent: "space-between", fontSize: "0.75rem", flexWrap: "wrap", gap: 4 },
-  infoBox:     { background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 10, padding: "14px 18px", marginBottom: 20, display: "flex", gap: 12, alignItems: "flex-start", fontSize: "0.88rem", color: C.greenDark, lineHeight: 1.6 },
-  infoIcon:    { fontSize: "1.3rem", flexShrink: 0 },
-  footerNote:  { marginTop: 28, color: "#aaa", fontSize: "0.76rem", textAlign: "center" },
-  code:        { background: C.milk, border: `1px solid ${C.yellowDark}`, padding: "2px 6px", borderRadius: 4, fontFamily: "monospace", color: C.green, fontSize: "0.76rem" },
+  schoolAbbr:    { fontSize: "1.2rem", fontWeight: 900, color: C.greenDark },
+  schoolName:    { fontSize: "0.75rem", color: "#888", marginTop: 2 },
+  schoolTotal:   { fontSize: "2rem", fontWeight: 900, color: C.green },
+  progressBg:    { height: 8, background: C.milk, borderRadius: 999, overflow: "hidden", marginBottom: 10 },
+  progressFill:  { height: "100%", background: C.green, borderRadius: 999, transition: "width 0.4s ease" },
+  schoolFooter:  { display: "flex", justifyContent: "space-between", fontSize: "0.75rem", flexWrap: "wrap", gap: 4 },
+  infoBox:       { background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 10, padding: "14px 18px", marginBottom: 20, display: "flex", gap: 12, alignItems: "flex-start", fontSize: "0.88rem", color: C.greenDark, lineHeight: 1.6 },
+  infoIcon:      { fontSize: "1.3rem", flexShrink: 0 },
+  footerNote:    { marginTop: 28, color: "#aaa", fontSize: "0.76rem", textAlign: "center" },
   // Manage tab
-  actionBtn:   { padding: "10px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.85rem" },
-  editCard:    { background: C.white, border: `2px solid ${C.green}`, borderRadius: 14, padding: "20px 24px", marginBottom: 20, boxShadow: "0 4px 16px rgba(18,130,124,0.12)" },
-  formRow:     { marginBottom: 12 },
-  formLabel:   { display: "block", fontSize: "0.72rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 },
-  formInput:   { width: "100%", maxWidth: 400, background: C.milk, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "9px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
-  codePanel:   { background: C.greenDark, border: `2px solid ${C.yellow}`, borderRadius: 14, padding: "20px", marginBottom: 20 },
-  codeBlock:   { fontFamily: "monospace", fontSize: "0.75rem", color: "#a8f0ec", overflowX: "auto", whiteSpace: "pre", maxHeight: 320, overflowY: "auto", lineHeight: 1.6 },
+  actionBtn:     { padding: "10px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.85rem" },
+  editCard:      { background: C.white, border: `2px solid ${C.green}`, borderRadius: 14, padding: "20px 24px", marginBottom: 20, boxShadow: "0 4px 16px rgba(18,130,124,0.12)" },
+  formLabel:     { display: "block", fontSize: "0.72rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 },
+  formInput:     { width: "100%", background: C.milk, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "9px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
+  settingsSection: { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 12, marginBottom: 20, overflow: "hidden" },
+  settingsToggle: { width: "100%", background: "none", border: "none", borderBottom: `1.5px solid ${C.milkDark}`, padding: "14px 18px", textAlign: "left", cursor: "pointer", fontWeight: 700, color: C.greenDark, fontSize: "0.88rem" },
+  settingsBody:  { padding: "20px 18px" },
+  statusBanner:  { border: "1.5px solid", borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: "0.85rem", fontWeight: 600 },
 };
