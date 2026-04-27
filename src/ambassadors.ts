@@ -43,7 +43,7 @@ const ambassadors: AmbassadorData = {
     "004": { name: "Marong",          school: "EUI",         status: "active" },
     "005": { name: "Chidinma",        school: "EUI",         status: "active" },
     "006": { name: "Debby",           school: "EUI",         status: "active" },
-    "007": { name: "Osbebo",          school: "EUI",         status: "active" },
+    "007": { name: "Oshebo",          school: "EUI",         status: "active" },
     "008": { name: "Ayomidele",       school: "UNIBEN",      status: "active" },
     "009": { name: "Goodness",        school: "EUI",         status: "active" },
     "010": { name: "Ik Nation",       school: "EUI",         status: "active" },
