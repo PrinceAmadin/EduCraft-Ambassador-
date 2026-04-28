@@ -49,7 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       return;
     }
 
-    const transport = nodemailer.createTransport({ service: "gmail", auth: { user: GMAIL, pass: gmailPass } });
+    const transport = nodemailer.createTransport({ host: "smtp.gmail.com", port: 465, secure: true, auth: { user: GMAIL, pass: gmailPass } });
 
     // Send individually (not BCC) so each ambassador gets a personal email
     let sent = 0, failed = 0;

@@ -9,7 +9,7 @@ async function send(to: string, subject: string, html: string): Promise<boolean>
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!pass) return false;
   try {
-    const t = nodemailer.createTransport({ service: "gmail", auth: { user: GMAIL, pass } });
+    const t = nodemailer.createTransport({ host: "smtp.gmail.com", port: 465, secure: true, auth: { user: GMAIL, pass } });
     await t.sendMail({ from: `"EduCraft" <${GMAIL}>`, to, subject, html });
     return true;
   } catch (e) { console.error("mail error:", e); return false; }

@@ -26,13 +26,13 @@ async function notifyAdmin(profile: {
   });
 
   const transport = nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: ADMIN_EMAIL, pass },
-    // Explicit timeouts so slow connections don't hang forever
-    pool: false,
-    socketTimeout: 15000,
-    greetingTimeout: 10000,
-    connectionTimeout: 10000,
+    host:             "smtp.gmail.com",
+    port:             465,
+    secure:           true,             // SSL on port 465
+    auth:             { user: ADMIN_EMAIL, pass },
+    socketTimeout:    15000,
+    greetingTimeout:  10000,
+    connectionTimeout:10000,
   });
 
   await transport.sendMail({
