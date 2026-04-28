@@ -120,6 +120,16 @@ export default function AdminDashboard(){
   const[rejId,setRejId]=useState<string|null>(null);const[rejReason,setRejReason]=useState("");
   const[appMsg,setAppMsg]=useState("");
 
+  // Edit pending registration state
+  const[editPendingId,setEditPendingId]=useState<string|null>(null); // originalSlotId
+  const[epSlotId,setEpSlotId]=useState("");
+  const[epName,setEpName]=useState("");
+  const[epSchool,setEpSchool]=useState("");
+  const[epEmail,setEpEmail]=useState("");
+  const[epReason,setEpReason]=useState("");
+  const[epSt,setEpSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
+  const[epMsg,setEpMsg]=useState("");
+
   // Log order
   const[logId,setLogId]=useState<string|null>(null);const[logName,setLogName]=useState("");
   const[logDesc,setLogDesc]=useState("");const[logAmt,setLogAmt]=useState("");const[logPct,setLogPct]=useState("10");
@@ -204,6 +214,33 @@ export default function AdminDashboard(){
       if(r.ok)setPending(await r.json());
     }catch{/**/}
     finally{setPLoad(false);}
+  };
+
+  const openEditPending=(p:{slotId:string;name:string;school:string;email:string})=>{
+    setEditPendingId(p.slotId);
+    setEpSlotId(p.slotId);setEpName(p.name);setEpSchool(p.school);setEpEmail(p.email);
+    setEpReason("");setEpSt("idle");setEpMsg("");
+  };
+
+  const saveEditPending=async()=>{
+    if(!editPendingId)return;
+    if(!epSlotId.trim()){setEpMsg("Slot ID is required.");setEpSt("fail");return;}
+    if(!epName.trim())  {setEpMsg("Name is required.");setEpSt("fail");return;}
+    if(!epEmail.trim()) {setEpMsg("Email is required.");setEpSt("fail");return;}
+    setEpSt("busy");setEpMsg("");
+    try{
+      const r=await fetch("/api/edit-pending",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({originalSlotId:editPendingId,slotId:epSlotId,name:epName,school:epSchool,email:epEmail,changeReason:epReason,adminSecret:secret})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed to update.");
+      // Update local pending list with corrected values
+      setPending(prev=>prev.map(p=>p.slotId===editPendingId
+        ?{...p,slotId:epSlotId.toUpperCase(),name:epName,school:epSchool,email:epEmail}
+        :p
+      ));
+      setEpSt("ok");setEpMsg("Details updated successfully.");
+      setTimeout(()=>{setEditPendingId(null);setEpSt("idle");setEpMsg("");},2000);
+    }catch(e){setEpSt("fail");setEpMsg((e as Error).message);}
   };
 
   const approve=async(slotId:string)=>{
@@ -440,7 +477,10 @@ export default function AdminDashboard(){
                   <tbody>
                     {pending.map((p,i)=>(
                       <tr key={p.slotId} style={{...s.tr,background:i%2===0?C.white:C.milk}}>
-                        <td style={s.td}><span style={s.slotId}>{p.slotId}</span></td>
+                        <td style={s.td}>
+                          <span style={s.slotId}>{p.slotId}</span>
+                          {(p as {adminCorrected?:boolean}).adminCorrected&&<span style={{marginLeft:6,fontSize:"0.68rem",background:C.yellowDark,color:C.greenDark,borderRadius:4,padding:"1px 6px",fontWeight:700}}>Edited</span>}
+                        </td>
                         <td style={s.td}><strong style={{color:C.greenDark}}>{p.name}</strong></td>
                         <td style={s.td}><span style={s.schoolTag}>{p.school||"—"}</span></td>
                         <td style={s.td}><span style={{color:C.green,fontSize:"0.82rem"}}>{p.email}</span></td>
@@ -453,8 +493,9 @@ export default function AdminDashboard(){
                               <button style={{...s.cpBtn}} onClick={()=>setRejId(null)}>Cancel</button>
                             </div>
                           ):(
-                            <div style={{display:"flex",gap:6}}>
+                            <div style={{display:"flex",gap:6,flexWrap:"wrap" as const}}>
                               <button style={{...s.actBtn,background:C.green,color:C.white,padding:"6px 14px",fontSize:"0.78rem"}} onClick={()=>approve(p.slotId)}>Approve</button>
+                              <button style={{...s.cpBtn,fontSize:"0.78rem",padding:"5px 12px"}} onClick={()=>openEditPending(p)}>Edit</button>
                               <button style={{...s.actBtn,background:C.red,color:C.white,padding:"6px 14px",fontSize:"0.78rem"}} onClick={()=>{setRejId(p.slotId);setRejReason("");}}>Reject</button>
                             </div>
                           )}
@@ -653,6 +694,69 @@ export default function AdminDashboard(){
 
         <p style={s.footer}>EduCraft Ambassador Panel · Powered by Vercel</p>
       </main>
+
+      {/* ── Edit Pending Registration Overlay ───────────────────────────────── */}
+      {editPendingId&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setEditPendingId(null);setEpSt("idle");}}}>
+          <div style={{...s.overlayBox,maxWidth:520}}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Edit Pending Registration</div>
+                <div style={s.overlaySub}>Original Slot ID: {editPendingId}</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setEditPendingId(null);setEpSt("idle");}}>✕</button>
+            </div>
+
+            {/* Original vs corrected notice */}
+            <div style={{background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.yellowDark}`,borderRadius:4,padding:"12px 14px",marginBottom:18,fontSize:"0.82rem",color:C.greenDark,lineHeight:1.7}}>
+              <strong>Admin correction mode.</strong> Update any details that are incorrect or misleading. A reason for change is required so there is an audit trail if the ambassador queries the edit.
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div>
+                <label style={s.fLabel}>Slot ID *</label>
+                <input style={s.fInp} value={epSlotId} onChange={e=>setEpSlotId(e.target.value)} placeholder="e.g. 007"/>
+                <p style={{fontSize:"0.72rem",color:"#aaa",marginTop:4}}>Changing this moves the record to the new slot.</p>
+              </div>
+              <div>
+                <label style={s.fLabel}>School</label>
+                <input style={s.fInp} value={epSchool} onChange={e=>setEpSchool(e.target.value)} placeholder="e.g. UNIBEN"/>
+              </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Full Name *</label>
+                <input style={s.fInp} value={epName} onChange={e=>setEpName(e.target.value)} placeholder="Ambassador's full name"/>
+              </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Email Address *</label>
+                <input style={s.fInp} type="email" value={epEmail} onChange={e=>setEpEmail(e.target.value)} placeholder="ambassador@example.com"/>
+              </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={{...s.fLabel,color:C.red}}>Reason for Change *</label>
+                <textarea
+                  style={{...s.fInp,height:80,resize:"vertical" as const,fontFamily:"inherit"}}
+                  placeholder="e.g. Ambassador entered wrong slot ID — corrected to match our records. School updated from EUI to UNIBEN per verified student ID."
+                  value={epReason}
+                  onChange={e=>setEpReason(e.target.value)}
+                />
+                <p style={{fontSize:"0.72rem",color:"#aaa",marginTop:4}}>This is stored in the audit log and visible to your admin team.</p>
+              </div>
+            </div>
+
+            {epMsg&&<div style={{...s.banner,borderColor:epSt==="fail"?C.red:C.green,background:epSt==="fail"?C.redLight:C.white,color:epSt==="fail"?C.red:C.greenDark,marginBottom:14}}>{epMsg}</div>}
+
+            <div style={{display:"flex",gap:8}}>
+              <button
+                style={{...s.actBtn,background:epSt==="ok"?C.green:C.greenDark,color:C.yellow,flex:1,opacity:epSt==="busy"?0.7:1}}
+                onClick={saveEditPending}
+                disabled={epSt==="busy"||epSt==="ok"}
+              >
+                {epSt==="busy"?"Saving…":epSt==="ok"?"Saved — Close when ready":"Save Corrections"}
+              </button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setEditPendingId(null);setEpSt("idle");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Add Ambassador Overlay ───────────────────────────────────────────── */}
       {addOpen&&(
