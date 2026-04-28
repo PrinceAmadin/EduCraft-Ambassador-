@@ -102,6 +102,14 @@ export default function AdminDashboard(){
   const[mSearch,setMSearch]=useState("");
   const[addOpen,setAddOpen]=useState(false);
   const[newId,setNewId]=useState("");const[newName,setNewName]=useState("");const[newSchool,setNewSchool]=useState("");const[newSt,setNewSt]=useState<"active"|"vacant">("active");const[addErr,setAddErr]=useState("");
+
+  // Add Core Ambassador state
+  const[addCoreOpen,setAddCoreOpen]=useState(false);
+  const[ncId,setNcId]=useState("");const[ncName,setNcName]=useState("");const[ncSchool,setNcSchool]=useState("");const[ncPct,setNcPct]=useState(10);const[ncErr,setNcErr]=useState("");
+
+  // Add Sub Ambassador state
+  const[addSubOpen,setAddSubOpen]=useState(false);
+  const[nsId,setNsId]=useState("");const[nsName,setNsName]=useState("");const[nsSchool,setNsSchool]=useState("");const[nsCoreId,setNsCoreId]=useState("");const[nsErr,setNsErr]=useState("");
   const[gh,setGhRaw]=useState<{owner:string;repo:string;token:string}>(()=>lsGet(LS_G)??{owner:"",repo:"",token:""});
   const setGh=(v:typeof gh)=>{setGhRaw(v);lsSet(LS_G,v);};
   const[dep,setDep]=useState<Deploy>("idle");const[depMsg,setDepMsg]=useState("");const[ghOpen,setGhOpen]=useState(false);
@@ -321,6 +329,42 @@ export default function AdminDashboard(){
   const startEdit=(id:string)=>{const sl=data.slots[id];setEditId(id);setEditName(sl.name);setEditSchool(sl.school);setEditSt(sl.status);};
   const saveEdit=()=>{if(!editId)return;setData({...data,slots:{...data.slots,[editId]:{name:editName,school:editSchool,status:editSt}}});setEditId(null);};
   const saveNew=()=>{const id=newId.trim().padStart(3,"0");if(!id){setAddErr("Slot ID required.");return;}if(!newName.trim()){setAddErr("Name required.");return;}if(data.slots[id]){setAddErr(`Slot ${id} already exists.`);return;}setData({...data,slots:{...data.slots,[id]:{name:newName.trim(),school:newSchool.trim(),status:newSt}}});setAddOpen(false);setAddErr("");};
+
+  const nextEccaId=():string=>{
+    const nums=data.coreAmbassadors.map(c=>{const m=c.id.match(/ECCA-(\d+)/);return m?parseInt(m[1],10):0;});
+    return `ECCA-${String((nums.length?Math.max(...nums):0)+1).padStart(3,"0")}`;
+  };
+  const nextEcsaId=(coreId:string):string=>{
+    const core=coreId.replace(/^ECCA-/,"");
+    const subs=data.subAmbassadors.filter(s=>s.coreId===coreId);
+    const nums=subs.map(s=>{const m=s.id.match(/ECSA-\d+-(\d+)/);return m?parseInt(m[1],10):0;});
+    const next=String((nums.length?Math.max(...nums):0)+1).padStart(3,"0");
+    return `ECSA-${core}-${next}`;
+  };
+
+  const saveNewCore=()=>{
+    if(!ncName.trim()){setNcErr("Name is required.");return;}
+    if(!ncId.trim()){setNcErr("Slot ID is required.");return;}
+    const fullId=ncId.trim().toUpperCase().startsWith("ECCA-")?ncId.trim().toUpperCase():`ECCA-${ncId.trim().toUpperCase()}`;
+    if(data.coreAmbassadors.find(c=>c.id===fullId)){setNcErr(`${fullId} already exists.`);return;}
+    setData({...data,coreAmbassadors:[...data.coreAmbassadors,{id:fullId,name:ncName.trim(),school:ncSchool.trim(),percentage:ncPct}]});
+    setAddCoreOpen(false);setNcErr("");setNcId("");setNcName("");setNcSchool("");setNcPct(10);
+  };
+
+  const saveNewSub=()=>{
+    if(!nsName.trim()){setNsErr("Name is required.");return;}
+    if(!nsCoreId.trim()){setNsErr("Core Ambassador Slot ID is required.");return;}
+    const coreFullId=nsCoreId.trim().toUpperCase().startsWith("ECCA-")?nsCoreId.trim().toUpperCase():`ECCA-${nsCoreId.trim().toUpperCase()}`;
+    const coreExists=data.coreAmbassadors.find(c=>c.id===coreFullId);
+    if(!coreExists){setNsErr(`Core Ambassador ${coreFullId} does not exist. Add them first in the Core (ECCA) tab.`);return;}
+    const subId=nsId.trim()?
+      (nsId.trim().toUpperCase().startsWith("ECSA-")?nsId.trim().toUpperCase():`ECSA-${nsId.trim().toUpperCase()}`)
+      :nextEcsaId(coreFullId);
+    if(data.subAmbassadors.find(s=>s.id===subId)){setNsErr(`${subId} already exists.`);return;}
+    setData({...data,subAmbassadors:[...data.subAmbassadors,{id:subId,name:nsName.trim(),school:nsSchool.trim(),percentage:7,coreId:coreFullId}]});
+    setAddSubOpen(false);setNsErr("");setNsId("");setNsName("");setNsSchool("");setNsCoreId("");
+  };
+
   const doDeploy=async()=>{if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}setDep("busy");setDepMsg("Starting…");try{await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);setDep("ok");}catch(e){setDep("fail");setDepMsg(`❌ ${(e as Error).message}`);}};
 
   // Nav tabs
@@ -419,7 +463,10 @@ export default function AdminDashboard(){
 
         {/* ════ CORE ════ */}
         {tab==="core"&&(<>
-          <div style={s.secLabel}>Core Ambassadors (ECCA) — Senior Partners</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
+            <div style={s.secLabel}>Core Ambassadors (ECCA) — Senior Partners</div>
+            <button style={{...s.actBtn,background:C.green,color:C.white,padding:"8px 16px",fontSize:"0.82rem"}} onClick={()=>{setNcId(nextEccaId());setNcName("");setNcSchool("");setNcPct(10);setNcErr("");setAddCoreOpen(true);}}>Add Core Ambassador</button>
+          </div>
           <div style={s.info}><div><p>Core Ambassadors earn their base percentage plus <strong>3%</strong> for each Sub-Ambassador job. Share the Recruit Link with potential Sub-Ambassadors.</p></div></div>
           <div style={s.tableWrap}>
             <table style={s.table}>
@@ -441,7 +488,10 @@ export default function AdminDashboard(){
 
         {/* ════ SUB ════ */}
         {tab==="sub"&&(<>
-          <div style={s.secLabel}>Sub-Ambassadors (ECSA)</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
+            <div style={s.secLabel}>Sub-Ambassadors (ECSA)</div>
+            <button style={{...s.actBtn,background:C.green,color:C.white,padding:"8px 16px",fontSize:"0.82rem"}} onClick={()=>{setNsId("");setNsName("");setNsSchool("");setNsCoreId("");setNsErr("");setAddSubOpen(true);}}>Add Sub Ambassador</button>
+          </div>
           <div style={s.info}><div><p>Sub-Ambassadors earn <strong>7%</strong> per job. Their Core Ambassador earns an additional <strong>3%</strong> per Sub-Ambassador job.</p></div></div>
           <div style={s.tableWrap}>
             <table style={s.table}>
@@ -529,8 +579,24 @@ export default function AdminDashboard(){
           </div>
 
           {/* Tracking settings */}
+          {/* Mobile admin secret prompt — shown when secret appears empty */}
+          {!secret&&(
+            <div style={{background:"#fffbeb",border:`1.5px solid ${C.yellowDark}`,borderRadius:8,padding:"14px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap" as const}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:C.greenDark,fontSize:"0.88rem",marginBottom:6}}>Admin Secret Required</div>
+                <p style={{fontSize:"0.82rem",color:"#555",lineHeight:1.6,margin:"0 0 10px"}}>
+                  Enter your admin secret to enable Approve, Reject, Log Order, and Broadcast on this device. This must be set on every device you use.
+                </p>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap" as const}}>
+                  <input style={{...s.fInp,maxWidth:220,padding:"8px 12px"}} type="password" placeholder="Enter admin secret…" onBlur={e=>{if(e.target.value)setAdminSecret(e.target.value);}} onKeyDown={e=>{if(e.key==="Enter"&&(e.target as HTMLInputElement).value)setAdminSecret((e.target as HTMLInputElement).value);}}/>
+                  <button style={{...s.actBtn,background:C.greenDark,color:C.yellow,padding:"8px 16px",fontSize:"0.82rem"}} onClick={e=>{const inp=(e.currentTarget.previousElementSibling as HTMLInputElement);if(inp?.value){setAdminSecret(inp.value);}}}>Save Secret</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div style={{...s.settBox,marginBottom:16}}>
-            <button style={s.settToggle} onClick={()=>setSettOpen(o=>!o)}>🔐 Tracking Settings {settOpen?"▲":"▼"}</button>
+            <button style={s.settToggle} onClick={()=>setSettOpen(o=>!o)}>Tracking Settings {settOpen?"▲":"▼"}</button>
             {settOpen&&(
               <div style={{padding:"20px 18px"}}>
                 <div style={{marginBottom:12}}>
@@ -753,6 +819,109 @@ export default function AdminDashboard(){
                 {epSt==="busy"?"Saving…":epSt==="ok"?"Saved — Close when ready":"Save Corrections"}
               </button>
               <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setEditPendingId(null);setEpSt("idle");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Core Ambassador Overlay ──────────────────────────────────────── */}
+      {addCoreOpen&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setAddCoreOpen(false);setNcErr("");}}}>
+          <div style={{...s.overlayBox,maxWidth:500}}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Add Core Ambassador (ECCA)</div>
+                <div style={s.overlaySub}>Senior partner who earns base % + 3% per Sub Ambassador job</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setAddCoreOpen(false);setNcErr("");}}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div>
+                <label style={s.fLabel}>ECCA Slot ID *</label>
+                <input style={s.fInp} value={ncId} onChange={e=>setNcId(e.target.value)} placeholder="e.g. ECCA-006"/>
+                <p style={{fontSize:"0.72rem",color:"#aaa",marginTop:4}}>Auto-filled — change if needed.</p>
+              </div>
+              <div>
+                <label style={s.fLabel}>School</label>
+                <input style={s.fInp} value={ncSchool} onChange={e=>setNcSchool(e.target.value)} placeholder="e.g. EUI, UNIBEN…"/>
+              </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Full Name *</label>
+                <input style={s.fInp} value={ncName} onChange={e=>setNcName(e.target.value)} placeholder="Core Ambassador's full name"/>
+              </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Base Commission %</label>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap" as const,marginTop:4}}>
+                  {[10,15,20,25].map(p=>(
+                    <button key={p} style={{...s.fBtn,...(ncPct===p?{background:C.green,color:C.white,border:"none"}:{})}} onClick={()=>setNcPct(p)}>{p}%</button>
+                  ))}
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:"0.8rem",color:"#888"}}>Custom:</span>
+                    <input style={{...s.fInp,width:70,padding:"6px 10px"}} type="number" min="1" max="100"
+                      value={ncPct} onChange={e=>setNcPct(parseInt(e.target.value)||10)}/>
+                    <span style={{fontSize:"0.8rem",color:"#888"}}>%</span>
+                  </div>
+                </div>
+                <div style={{marginTop:10,background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.green}`,borderRadius:4,padding:"10px 14px",fontSize:"0.82rem",color:C.greenDark,lineHeight:1.7}}>
+                  <strong>Commission structure:</strong> This Core Ambassador earns <strong>{ncPct}%</strong> per job they bring directly.
+                  For every Sub Ambassador they manage, they earn an additional <strong>3%</strong> per Sub job
+                  (Sub earns <strong>7%</strong>, Core earns <strong>3%</strong> from the same job).
+                </div>
+              </div>
+            </div>
+            {ncErr&&<p style={{color:C.red,fontSize:"0.82rem",marginBottom:12}}>{ncErr}</p>}
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:C.green,color:C.white,flex:1}} onClick={saveNewCore}>Add Core Ambassador</button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setAddCoreOpen(false);setNcErr("");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Sub Ambassador Overlay ───────────────────────────────────────── */}
+      {addSubOpen&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setAddSubOpen(false);setNsErr("");}}}>
+          <div style={{...s.overlayBox,maxWidth:500}}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Add Sub Ambassador (ECSA)</div>
+                <div style={s.overlaySub}>Earns 7% per job — linked to a Core Ambassador who earns 3%</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setAddSubOpen(false);setNsErr("");}}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={{...s.fLabel,color:C.red}}>Core Ambassador Slot ID *</label>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <input style={{...s.fInp,flex:1}} value={nsCoreId} onChange={e=>{setNsCoreId(e.target.value);setNsId(e.target.value.trim()?nextEcsaId(e.target.value.trim().toUpperCase().startsWith("ECCA-")?e.target.value.trim().toUpperCase():`ECCA-${e.target.value.trim().toUpperCase()}`):"");}} placeholder="e.g. 001 or ECCA-001"/>
+                </div>
+                <p style={{fontSize:"0.72rem",color:"#888",marginTop:4}}>
+                  {nsCoreId.trim()&&(()=>{const cid=nsCoreId.trim().toUpperCase().startsWith("ECCA-")?nsCoreId.trim().toUpperCase():`ECCA-${nsCoreId.trim().toUpperCase()}`;const core=data.coreAmbassadors.find(c=>c.id===cid);return core?<span style={{color:C.green}}>Found: {core.name}</span>:<span style={{color:C.red}}>Not found — check the Core (ECCA) tab</span>;})()}
+                </p>
+              </div>
+              <div>
+                <label style={s.fLabel}>ECSA Slot ID</label>
+                <input style={s.fInp} value={nsId} onChange={e=>setNsId(e.target.value)} placeholder="Auto-generated"/>
+                <p style={{fontSize:"0.72rem",color:"#aaa",marginTop:4}}>Leave blank to auto-generate.</p>
+              </div>
+              <div>
+                <label style={s.fLabel}>School</label>
+                <input style={s.fInp} value={nsSchool} onChange={e=>setNsSchool(e.target.value)} placeholder="e.g. EUI, UNIBEN…"/>
+              </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Full Name *</label>
+                <input style={s.fInp} value={nsName} onChange={e=>setNsName(e.target.value)} placeholder="Sub Ambassador's full name"/>
+              </div>
+              <div style={{gridColumn:"1/-1",background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.yellowDark}`,borderRadius:4,padding:"10px 14px",fontSize:"0.82rem",color:C.greenDark,lineHeight:1.7}}>
+                <strong>Fixed commission:</strong> Sub Ambassadors always earn <strong>7%</strong> per job they bring.
+                Their linked Core Ambassador automatically earns <strong>3%</strong> for each of those jobs.
+                The Sub's total % shows in the Core Ambassador's leaderboard.
+              </div>
+            </div>
+            {nsErr&&<p style={{color:C.red,fontSize:"0.82rem",marginBottom:12}}>{nsErr}</p>}
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:C.green,color:C.white,flex:1}} onClick={saveNewSub}>Add Sub Ambassador</button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setAddSubOpen(false);setNsErr("");}}>Cancel</button>
             </div>
           </div>
         </div>

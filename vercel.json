@@ -5,6 +5,16 @@
     { "source": "/ECSA/:id",      "destination": "/api/redirect?id=:id&type=ecsa" },
     { "source": "/register",      "destination": "/" }
   ],
+  "functions": {
+    "api/register.ts":    { "maxDuration": 30 },
+    "api/approve.ts":     { "maxDuration": 30 },
+    "api/track-order.ts": { "maxDuration": 30 },
+    "api/broadcast.ts":   { "maxDuration": 30 },
+    "api/stats.ts":       { "maxDuration": 30 },
+    "api/pending.ts":     { "maxDuration": 30 },
+    "api/edit-pending.ts":{ "maxDuration": 30 },
+    "api/reset-slot.ts":  { "maxDuration": 30 }
+  },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite"
