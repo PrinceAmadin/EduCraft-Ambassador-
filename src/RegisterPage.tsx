@@ -1,11 +1,8 @@
-// src/RegisterPage.tsx — Public ambassador self-registration form
-// Submissions go to a pending queue; admin must approve before link is activated.
-
+// src/RegisterPage.tsx — Ambassador self-registration
 import { useState } from "react";
 
 const C = { yellow:"#fbdb21",yellowDark:"#E0B846",green:"#12827c",greenDark:"#0D5753",white:"#ffffff",milk:"#FFF9ED",milkDark:"#F0EBD8",red:"#ef4444",redLight:"#fef2f2" };
-
-type State = "idle" | "loading" | "pending" | "error";
+type State = "idle"|"loading"|"pending"|"error";
 
 export default function RegisterPage() {
   const [form, setForm] = useState({ slotId:"", name:"", school:"", email:"" });
@@ -31,19 +28,19 @@ export default function RegisterPage() {
   if (state === "pending") return (
     <div style={pg}>
       <div style={{ ...card, textAlign:"center" as const }}>
-        <div style={{ fontSize:"3rem", marginBottom:16 }}>⏳</div>
-        <h2 style={{ color:C.greenDark, fontSize:"1.4rem", fontWeight:900, margin:"0 0 14px" }}>Registration Submitted!</h2>
-        <p style={{ color:C.green, lineHeight:1.7, fontSize:"0.9rem", marginBottom:18 }}>
+        <div style={{ width:48, height:48, background:C.green, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 20px", color:C.white, fontSize:"1.4rem", fontWeight:700 }}>✓</div>
+        <h2 style={{ color:C.greenDark, fontSize:"1.35rem", fontWeight:700, margin:"0 0 14px" }}>Registration Submitted</h2>
+        <p style={{ color:"#555", lineHeight:1.7, fontSize:"0.9rem", marginBottom:18 }}>
           Your details have been sent to the EduCraft admin team for verification.
-          Once approved, you'll receive a <strong>welcome email</strong> with your active ambassador link.
+          Once approved, you will receive a confirmation email with your active ambassador link.
         </p>
-        <div style={{ background:C.milk, borderRadius:10, padding:"14px 18px", fontSize:"0.83rem", color:C.greenDark, lineHeight:1.9, textAlign:"left" as const }}>
+        <div style={{ background:C.milk, borderRadius:8, padding:"14px 18px", fontSize:"0.83rem", color:C.greenDark, lineHeight:1.9, textAlign:"left" as const }}>
           <strong>What happens next:</strong><br/>
-          1. Admin reviews your details (within 24 hrs)<br/>
-          2. If approved → you get a welcome email with your link ✅<br/>
-          3. If not verified → you'll be notified ❌
+          1. Admin reviews your details (within 24 hours)<br/>
+          2. If approved — you receive a confirmation email with your link<br/>
+          3. If not verified — you will be notified with the reason
         </div>
-        <div style={{ marginTop:24, paddingTop:16, borderTop:`1px solid ${C.milkDark}`, fontSize:"0.68rem", color:C.green, fontWeight:700, letterSpacing:"0.08em" }}>
+        <div style={{ marginTop:24, paddingTop:16, borderTop:`1px solid ${C.milkDark}`, fontSize:"0.7rem", color:C.green, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase" as const }}>
           EDUCRAFT — Academic &amp; Technical Documentation Experts
         </div>
       </div>
@@ -53,46 +50,46 @@ export default function RegisterPage() {
   return (
     <div style={pg}>
       <div style={card}>
-        <div style={{ textAlign:"center" as const, marginBottom:28 }}>
-          <div style={{ fontSize:"2.6rem", marginBottom:10 }}>🎓</div>
-          <h1 style={{ color:C.greenDark, fontSize:"1.5rem", fontWeight:900, margin:"0 0 10px" }}>Activate Your Ambassador Link</h1>
-          <p style={{ color:C.green, fontSize:"0.88rem", lineHeight:1.7, margin:0 }}>
-            Submit once. After admin verification your link goes live and you start earning commissions.
+        <div style={{ marginBottom:28 }}>
+          <div style={{ fontSize:"0.78rem", fontWeight:700, color:C.green, letterSpacing:"0.1em", textTransform:"uppercase" as const, marginBottom:6 }}>EduCraft Ambassador Programme</div>
+          <h1 style={{ color:C.greenDark, fontSize:"1.5rem", fontWeight:700, margin:"0 0 10px", lineHeight:1.2 }}>Activate Your Ambassador Account</h1>
+          <p style={{ color:"#666", fontSize:"0.88rem", lineHeight:1.7, margin:0 }}>
+            Submit your details once. After admin verification, your referral link goes live and you begin earning commissions automatically.
           </p>
         </div>
 
         <div style={{ display:"flex", flexDirection:"column" as const, gap:16 }}>
           {([
-            { k:"slotId", label:"Your Slot ID *",          placeholder:"e.g. 007  or  ECCA-001",     hint:"Your position number — ask your coordinator if unsure." },
-            { k:"name",   label:"Full Name *",              placeholder:"Your full name",              hint:"" },
-            { k:"school", label:"School / University",      placeholder:"e.g. EUI, UNIBEN…",          hint:"" },
-            { k:"email",  label:"Email Address *",          placeholder:"you@example.com",            hint:"Approval and commission notifications will be sent here.", type:"email" },
+            { k:"slotId", label:"Slot ID",         placeholder:"e.g. 007  or  ECCA-001",  hint:"Your position number — ask your EduCraft coordinator if unsure." },
+            { k:"name",   label:"Full Name",        placeholder:"Your full name",           hint:"" },
+            { k:"school", label:"School / University", placeholder:"e.g. EUI, UNIBEN…",   hint:"" },
+            { k:"email",  label:"Email Address",    placeholder:"you@example.com",          hint:"Approval confirmation and commission notifications will be sent here.", type:"email" },
           ] as const).map(f => (
             <div key={f.k}>
-              <label style={lbl}>{f.label}</label>
-              <input style={inp} type={(f as { type?: string }).type || "text"} placeholder={f.placeholder}
+              <label style={lbl}>{f.label} {f.k !== "school" && <span style={{color:C.red}}>*</span>}</label>
+              <input style={inp} type={(f as {type?:string}).type || "text"} placeholder={f.placeholder}
                 value={form[f.k]} onChange={set(f.k)} autoComplete="off"/>
               {f.hint && <p style={{ fontSize:"0.74rem", color:"#aaa", marginTop:5, lineHeight:1.5 }}>{f.hint}</p>}
             </div>
           ))}
 
           {state === "error" && (
-            <div style={{ background:C.redLight, border:`1.5px solid ${C.red}`, borderRadius:8, padding:"11px 14px", color:C.red, fontSize:"0.85rem", fontWeight:600 }}>
-              ⚠️ {err}
+            <div style={{ background:C.redLight, border:`1.5px solid ${C.red}`, borderRadius:6, padding:"11px 14px", color:C.red, fontSize:"0.85rem", fontWeight:600 }}>
+              {err}
             </div>
           )}
 
           <button
-            style={{ background:state==="loading"?C.yellowDark:C.yellow, color:C.greenDark, border:"none", borderRadius:10, padding:14, fontSize:"1rem", fontWeight:800, cursor:state==="loading"?"not-allowed":"pointer", opacity:state==="loading"?0.7:1, marginTop:4 }}
+            style={{ background:state==="loading"?C.yellowDark:C.yellow, color:C.greenDark, border:"none", borderRadius:6, padding:"13px", fontSize:"0.95rem", fontWeight:700, cursor:state==="loading"?"not-allowed":"pointer", opacity:state==="loading"?0.7:1, marginTop:4, letterSpacing:"0.02em" }}
             onClick={submit} disabled={state==="loading"}>
-            {state==="loading" ? "Submitting…" : "Submit for Approval →"}
+            {state==="loading" ? "Submitting…" : "Submit for Approval"}
           </button>
         </div>
 
         <p style={{ marginTop:18, fontSize:"0.73rem", color:"#bbb", textAlign:"center" as const, lineHeight:1.6 }}>
-          Your information is only used to verify your identity and notify you about commissions.
+          Your information is used solely for identity verification and commission notifications.
         </p>
-        <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${C.milkDark}`, textAlign:"center" as const, fontSize:"0.68rem", color:C.green, fontWeight:700, letterSpacing:"0.08em" }}>
+        <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${C.milkDark}`, textAlign:"center" as const, fontSize:"0.7rem", color:C.green, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase" as const }}>
           EDUCRAFT — Academic &amp; Technical Documentation Experts
         </div>
       </div>
@@ -101,6 +98,6 @@ export default function RegisterPage() {
 }
 
 const pg  : React.CSSProperties = { minHeight:"100vh", background:C.milk, display:"flex", alignItems:"center", justifyContent:"center", padding:"32px 16px", fontFamily:"'Segoe UI',system-ui,sans-serif" };
-const card: React.CSSProperties = { background:C.white, border:`2px solid #E0B846`, borderRadius:20, padding:"40px 36px", maxWidth:480, width:"100%", boxShadow:"0 4px 28px rgba(13,87,83,.12)" };
-const lbl : React.CSSProperties = { display:"block", fontSize:"0.72rem", fontWeight:700, color:C.green, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 };
-const inp : React.CSSProperties = { width:"100%", background:C.milk, border:`1.5px solid #E0B846`, borderRadius:8, padding:"11px 14px", color:C.greenDark, fontSize:"0.88rem", outline:"none", boxSizing:"border-box" };
+const card: React.CSSProperties = { background:C.white, border:`1px solid #e0e0e0`, borderTop:`4px solid ${C.green}`, borderRadius:4, padding:"40px 36px", maxWidth:480, width:"100%", boxShadow:"0 2px 16px rgba(0,0,0,.08)" };
+const lbl : React.CSSProperties = { display:"block", fontSize:"0.72rem", fontWeight:700, color:"#555", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 };
+const inp : React.CSSProperties = { width:"100%", background:C.milk, border:`1.5px solid #ddd`, borderRadius:6, padding:"11px 14px", color:C.greenDark, fontSize:"0.88rem", outline:"none", boxSizing:"border-box" };

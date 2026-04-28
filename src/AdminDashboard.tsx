@@ -54,9 +54,9 @@ async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,
   const put=async(p:string,c:string,s:string)=>{const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"🤖 EduCraft Admin deploy",content:b64(c),sha:s})});if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}};
   log("📡 Connecting to GitHub…");
   const aS=await sha("src/ambassadors.ts");
-  log("📝 Updating ambassadors.ts…");
+  log("Updating ambassadors.ts…");
   await put("src/ambassadors.ts",genAmbTS(data),aS);
-  log("✅ Done! Vercel is rebuilding (~30s)…");
+  log("Done. Vercel is rebuilding (~30s)…");
 }
 
 function nextId(slots:Record<string,AmbassadorSlot>):string{
@@ -112,6 +112,11 @@ export default function AdminDashboard(){
   const[logDesc,setLogDesc]=useState("");const[logAmt,setLogAmt]=useState("");const[logPct,setLogPct]=useState("10");
   const[logSt,setLogSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");const[logMsg,setLogMsg]=useState("");
 
+  // Reset slot registration
+  const[resetId,setResetId]=useState<string|null>(null);
+  const[resetSt,setResetSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
+  const[resetMsg,setResetMsg]=useState("");
+
   // Auto-fetch when Tracking tab opens
   useEffect(()=>{if(tab==="tracking"){loadStats();loadPending();}},[tab]); // eslint-disable-line
 
@@ -132,9 +137,14 @@ export default function AdminDashboard(){
 
   const schoolStats=useMemo(()=>{
     const m:Record<string,{active:number;vacant:number}>={};
+    // General slots
     Object.values(data.slots).forEach(sl=>{const k=sl.school||"—";if(!m[k])m[k]={active:0,vacant:0};sl.status==="active"?m[k].active++:m[k].vacant++;});
+    // Core ambassadors always count as active in their school
+    data.coreAmbassadors.forEach(c=>{if(!c.school)return;const k=c.school;if(!m[k])m[k]={active:0,vacant:0};m[k].active++;});
+    // Sub ambassadors always count as active in their school
+    data.subAmbassadors.forEach(s=>{if(!s.school)return;const k=s.school;if(!m[k])m[k]={active:0,vacant:0};m[k].active++;});
     return Object.entries(m).sort((a,b)=>(b[1].active+b[1].vacant)-(a[1].active+a[1].vacant));
-  },[data.slots]);
+  },[data.slots,data.coreAmbassadors,data.subAmbassadors]);
 
   const mRows=useMemo(()=>Object.entries(data.slots).filter(([id,sl])=>{const q=mSearch.toLowerCase();return!q||id.includes(q)||sl.name.toLowerCase().includes(q)||sl.school.toLowerCase().includes(q);}),[data.slots,mSearch]);
 
@@ -192,7 +202,7 @@ export default function AdminDashboard(){
       if(!r.ok)throw new Error(d.error||"Failed");
       setPending(p=>p.filter(x=>x.slotId!==slotId));
       setStats(p=>({...p,[slotId]:{...(p[slotId]??{clicks:0,orders:0}),email:d.email||null,registeredName:d.name||null}}));
-      setAppMsg(d.emailSent?`✅ ${slotId} approved — welcome email sent to ${d.email}.`:`✅ ${slotId} approved. (Add GMAIL_APP_PASSWORD in Vercel to send welcome emails.)`);
+      setAppMsg(d.emailSent?`${slotId} approved — welcome email sent to ${d.email}.`:`${slotId} approved. (Add GMAIL_APP_PASSWORD in Vercel to send welcome emails.)`);
     }catch(e){setAppMsg(`❌ ${(e as Error).message}`);}
   };
 
@@ -222,31 +232,43 @@ export default function AdminDashboard(){
       setLogSt("ok");
       // Clear, precise message based on emailReason from server
       const msgs:Record<string,string>={
-        sent:           `✅ Order logged! Commission email sent to ${d.emailTo}`,
-        no_profile:     "✅ Order logged. This ambassador is not yet approved — no email sent.",
-        no_email:       "✅ Order logged. Ambassador profile has no email address.",
-        no_gmail_password: "✅ Order logged. Add GMAIL_APP_PASSWORD to Vercel to enable emails.",
-        send_failed:    "✅ Order logged. Email failed to send — check GMAIL_APP_PASSWORD in Vercel.",
+        sent: `Order logged. Commission email sent to ${d.emailTo}`,
+        no_profile:     "Order logged. This ambassador is not yet approved — no email sent.",
+        no_email:       "Order logged. Ambassador profile has no email address.",
+        no_gmail_password: "Order logged. Add GMAIL_APP_PASSWORD to Vercel to enable emails.",
+        send_failed:    "Order logged. Email failed to send — check GMAIL_APP_PASSWORD in Vercel.",
       };
-      setLogMsg(msgs[d.emailReason]??`✅ Order logged.`);
+      setLogMsg(msgs[d.emailReason]??`Order logged.`);
       setStats(p=>({...p,[logId]:{...(p[logId]??{clicks:0,email:null,registeredName:null}),orders:(p[logId]?.orders??0)+1}}));
       setTimeout(()=>{setLogId(null);setLogSt("idle");setLogMsg("");},5000);
     }catch(e){setLogSt("fail");setLogMsg(`❌ ${(e as Error).message}`);}
   };
 
+  const resetSlot=async(slotId:string)=>{
+    setResetSt("busy");setResetMsg("");
+    try{
+      const r=await fetch("/api/reset-slot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slotId,adminSecret:secret})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed");
+      setResetSt("ok");setResetMsg(`Slot ${slotId} registration cleared. The new ambassador can now register.`);
+      setStats(p=>{const n={...p};if(n[slotId]){n[slotId]={...n[slotId],email:null,registeredName:null};}return n;});
+      setTimeout(()=>{setResetId(null);setResetSt("idle");setResetMsg("");},4000);
+    }catch(e){setResetSt("fail");setResetMsg(`Error: ${(e as Error).message}`);}
+  };
+
   const startEdit=(id:string)=>{const sl=data.slots[id];setEditId(id);setEditName(sl.name);setEditSchool(sl.school);setEditSt(sl.status);};
   const saveEdit=()=>{if(!editId)return;setData({...data,slots:{...data.slots,[editId]:{name:editName,school:editSchool,status:editSt}}});setEditId(null);};
   const saveNew=()=>{const id=newId.trim().padStart(3,"0");if(!id){setAddErr("Slot ID required.");return;}if(!newName.trim()){setAddErr("Name required.");return;}if(data.slots[id]){setAddErr(`Slot ${id} already exists.`);return;}setData({...data,slots:{...data.slots,[id]:{name:newName.trim(),school:newSchool.trim(),status:newSt}}});setAddOpen(false);setAddErr("");};
-  const doDeploy=async()=>{if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("⚠️ Fill in GitHub settings first.");return;}setDep("busy");setDepMsg("Starting…");try{await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);setDep("ok");}catch(e){setDep("fail");setDepMsg(`❌ ${(e as Error).message}`);}};
+  const doDeploy=async()=>{if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}setDep("busy");setDepMsg("Starting…");try{await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);setDep("ok");}catch(e){setDep("fail");setDepMsg(`❌ ${(e as Error).message}`);}};
 
   // Nav tabs
-  const navTabs:{key:TabId;label:string;icon:string}[]=[
-    {key:"ambassadors",label:"Ambassadors",icon:"👥"},
-    {key:"schools",    label:"Schools",    icon:"🏫"},
-    {key:"core",       label:"Core (ECCA)",icon:"⭐"},
-    {key:"sub",        label:"Sub (ECSA)", icon:"🔗"},
-    {key:"tracking",   label:pending.length>0?`Tracking (${pending.length})`:"Tracking",icon:"📊"},
-    {key:"manage",     label:"Manage",     icon:"⚙️"},
+  const navTabs:{key:TabId;label:string}[]=[
+    {key:"ambassadors",label:"Ambassadors"},
+    {key:"schools",    label:"Schools"},
+    {key:"core",       label:"Core (ECCA)"},
+    {key:"sub",        label:"Sub (ECSA)"},
+    {key:"tracking",   label:pending.length>0?`Tracking (${pending.length})`:"Tracking"},
+    {key:"manage",     label:"Manage"},
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -262,16 +284,16 @@ export default function AdminDashboard(){
           {navTabs.map(t=>(
             <button key={t.key}
               style={{...s.navBtn,...(tab===t.key?s.navBtnActive:{}),...(t.key==="tracking"&&pending.length>0&&tab!=="tracking"?{borderColor:C.yellow,color:C.yellow}:{})}}
-              onClick={()=>setTab(t.key)}>{t.icon} {t.label}</button>
+              onClick={()=>setTab(t.key)}>{t.label}</button>
           ))}
         </nav>
-        <button style={{...s.hamburger,display:mob?"flex":"none"}} onClick={()=>setMenu(o=>!o)}>{menu?"✕":"☰"}</button>
+        <button style={{...s.hamburger,display:mob?"flex":"none"}} onClick={()=>setMenu(o=>!o)}>{menu?"✕":"≡"}</button>
       </header>
       {menu&&(
         <div style={s.mobileMenu}>
           {navTabs.map(t=>(
             <button key={t.key} style={{...s.mobileItem,...(tab===t.key?s.mobileActive:{})}} onClick={()=>{setTab(t.key);setMenu(false);}}>
-              {t.icon} {t.label}{t.key==="tracking"&&pending.length>0?` (${pending.length})`:""}
+              {t.label}{t.key==="tracking"&&pending.length>0?` (${pending.length})`:""}
             </button>
           ))}
         </div>
@@ -333,7 +355,7 @@ export default function AdminDashboard(){
         {/* ════ CORE ════ */}
         {tab==="core"&&(<>
           <div style={s.secLabel}>Core Ambassadors (ECCA) — Senior Partners</div>
-          <div style={s.info}><span style={s.infoIcon}>⭐</span><p>Core Ambassadors earn base % + <strong>3%</strong> per Sub job. Share Recruit Link with potential Sub-Ambassadors.</p></div>
+          <div style={s.info}><div><p>Core Ambassadors earn their base percentage plus <strong>3%</strong> for each Sub-Ambassador job. Share the Recruit Link with potential Sub-Ambassadors.</p></div></div>
           <div style={s.tableWrap}>
             <table style={s.table}>
               <thead><tr style={s.thead}>{["No.","ID","Name","School","Base %","Subs","Total %","Recruit Link",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
@@ -355,7 +377,7 @@ export default function AdminDashboard(){
         {/* ════ SUB ════ */}
         {tab==="sub"&&(<>
           <div style={s.secLabel}>Sub-Ambassadors (ECSA)</div>
-          <div style={s.info}><span style={s.infoIcon}>🔗</span><p>Sub-Ambassadors earn <strong>7%</strong> per job. Their Core earns <strong>3%</strong> per Sub job.</p></div>
+          <div style={s.info}><div><p>Sub-Ambassadors earn <strong>7%</strong> per job. Their Core Ambassador earns an additional <strong>3%</strong> per Sub-Ambassador job.</p></div></div>
           <div style={s.tableWrap}>
             <table style={s.table}>
               <thead><tr style={s.thead}>{["No.","ID","Name","School","%","Under (Core)","Client Link",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
@@ -364,7 +386,7 @@ export default function AdminDashboard(){
                   <td style={s.td}><span style={s.num}>{i+1}.</span></td><td style={s.td}><span style={s.slotId}>{a.id}</span></td>
                   <td style={s.td}><strong style={{color:C.greenDark}}>{a.name}</strong></td><td style={s.td}><span style={s.schoolTag}>{a.school}</span></td>
                   <td style={s.td}><span style={{...s.badge,background:C.yellowDark,color:C.greenDark}}>{a.percentage}%</span></td>
-                  <td style={s.td}>{core?<span style={{color:C.green,fontWeight:600}}>⭐ {core.name}</span>:<span style={{color:"#bbb"}}>—</span>}</td>
+                  <td style={s.td}>{core?<span style={{color:C.green,fontWeight:600}}>{core.name}</span>:<span style={{color:"#bbb"}}>—</span>}</td>
                   <td style={s.td}><span style={s.link}>/ECSA/{a.id}</span></td>
                   <td style={s.td}><button style={{...s.cpBtn,...(copied===ck?s.cpDone:{})}} onClick={()=>copy(`${base}/ECSA/${a.id}`,ck)}>{copied===ck?"✓":"Copy"}</button></td>
                 </tr>
@@ -375,13 +397,13 @@ export default function AdminDashboard(){
 
         {/* ════ TRACKING ════ */}
         {tab==="tracking"&&(<>
-          <div style={s.secLabel}>📊 Referral Tracking — Live Leaderboard</div>
+          <div style={s.secLabel}>Referral Tracking — Live Leaderboard</div>
 
           {/* Pending approvals */}
           {pending.length>0&&(
             <div style={{background:C.white,border:`2px solid ${C.yellow}`,borderRadius:12,marginBottom:20,overflow:"hidden"}}>
               <div style={{background:C.yellow,padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap" as const,gap:8}}>
-                <span style={{fontWeight:800,color:C.greenDark}}>🔔 {pending.length} Registration{pending.length>1?"s":""} Awaiting Approval</span>
+                <span style={{fontWeight:800,color:C.greenDark}}>{pending.length} Registration{pending.length>1?"s":""} Awaiting Approval</span>
                 <span style={{fontSize:"0.78rem",color:C.greenDark,opacity:0.75}}>Verify each applicant before approving</span>
               </div>
               <div style={{overflowX:"auto" as const}}>
@@ -399,13 +421,13 @@ export default function AdminDashboard(){
                           {rejId===p.slotId?(
                             <div style={{display:"flex",gap:6,flexWrap:"wrap" as const,alignItems:"center"}}>
                               <input style={{...s.fInp,width:130,padding:"5px 8px",fontSize:"0.78rem"}} placeholder="Reason (optional)" value={rejReason} onChange={e=>setRejReason(e.target.value)}/>
-                              <button style={{...s.actBtn,background:C.red,color:C.white,padding:"5px 12px",fontSize:"0.78rem"}} onClick={()=>reject(p.slotId)}>Confirm Reject</button>
+                              <button style={{...s.actBtn,background:C.red,color:C.white,padding:"5px 12px",fontSize:"0.78rem"}} onClick={()=>reject(p.slotId)}>Confirm</button>
                               <button style={{...s.cpBtn}} onClick={()=>setRejId(null)}>Cancel</button>
                             </div>
                           ):(
                             <div style={{display:"flex",gap:6}}>
-                              <button style={{...s.actBtn,background:C.green,color:C.white,padding:"6px 14px",fontSize:"0.78rem"}} onClick={()=>approve(p.slotId)}>✓ Approve</button>
-                              <button style={{...s.actBtn,background:C.red,color:C.white,padding:"6px 14px",fontSize:"0.78rem"}} onClick={()=>{setRejId(p.slotId);setRejReason("");}}>✗ Reject</button>
+                              <button style={{...s.actBtn,background:C.green,color:C.white,padding:"6px 14px",fontSize:"0.78rem"}} onClick={()=>approve(p.slotId)}>Approve</button>
+                              <button style={{...s.actBtn,background:C.red,color:C.white,padding:"6px 14px",fontSize:"0.78rem"}} onClick={()=>{setRejId(p.slotId);setRejReason("");}}>Reject</button>
                             </div>
                           )}
                         </td>
@@ -427,13 +449,12 @@ export default function AdminDashboard(){
 
           {/* Registration link banner */}
           <div style={{...s.info,marginBottom:16}}>
-            <span style={s.infoIcon}>🔗</span>
             <div style={{flex:1}}>
               <p style={{fontWeight:700,marginBottom:4}}>Ambassador Registration Link</p>
               <p style={{fontSize:"0.82rem"}}>Share this so ambassadors can submit for verification and approval.</p>
               <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center",flexWrap:"wrap" as const}}>
                 <span style={{...s.link,fontSize:"0.85rem"}}>{base}/register</span>
-                <button style={{...s.cpBtn,...(copied==="rl"?s.cpDone:{})}} onClick={()=>copy(`${base}/register`,"rl")}>{copied==="rl"?"✓ Copied":"Copy Link"}</button>
+                <button style={{...s.cpBtn,...(copied==="rl"?s.cpDone:{})}} onClick={()=>copy(`${base}/register`,"rl")}>{copied==="rl"?"Copied":"Copy Link"}</button>
               </div>
             </div>
           </div>
@@ -441,8 +462,8 @@ export default function AdminDashboard(){
           {/* Log order panel */}
           {logId&&(
             <div style={s.editCard}>
-              <div style={{fontWeight:800,color:C.greenDark,marginBottom:14,fontSize:"1rem"}}>
-                📝 Log Order — <span style={{color:C.green}}>{logName}</span>
+              <div style={{fontWeight:700,color:C.greenDark,marginBottom:14,fontSize:"1rem"}}>
+                Log Order — <span style={{color:C.green}}>{logName}</span>
                 <span style={{marginLeft:8,fontSize:"0.74rem",color:"#aaa",fontWeight:400}}>({logId})</span>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:14}}>
@@ -457,7 +478,7 @@ export default function AdminDashboard(){
               </div>
               {amtNum>0&&(
                 <div style={{background:C.milk,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:"0.88rem",color:C.greenDark,fontWeight:600}}>
-                  💰 Commission: <strong style={{color:C.green}}>{naira(commission)}</strong>
+                  Commission: <strong style={{color:C.green}}>{naira(commission)}</strong>
                   <span style={{color:"#aaa",marginLeft:6,fontWeight:400}}>({pctNum}% of {naira(amtNum)})</span>
                 </div>
               )}
@@ -499,7 +520,7 @@ export default function AdminDashboard(){
             )}
           </div>
 
-          {sLoad&&<div style={{...s.banner,borderColor:C.yellowDark,color:C.greenDark,marginBottom:16}}>⏳ Loading tracking data…</div>}
+          {sLoad&&<div style={{...s.banner,borderColor:C.yellowDark,color:C.greenDark,marginBottom:16}}>Loading tracking data…</div>}
           {sErr&&!sLoad&&<div style={{...s.banner,borderColor:C.red,background:C.redLight,color:C.red,marginBottom:16}}>❌ {sErr} <button style={{marginLeft:12,background:"none",border:`1px solid ${C.red}`,color:C.red,borderRadius:6,padding:"3px 10px",cursor:"pointer",fontSize:"0.8rem"}} onClick={loadStats}>Retry</button></div>}
 
           <div style={{...s.controls,marginBottom:14}}>
@@ -535,7 +556,7 @@ export default function AdminDashboard(){
                       <strong style={{color:C.greenDark,display:"block"}}>{row.name}</strong>
                       <span style={{...s.slotId,fontSize:"0.74rem"}}>{row.id}</span>
                     </td>
-                    <td style={s.td}><span style={{...s.badge,background:tColor,color:tText}}>{row.kind==="core"?"⭐ Core":row.kind==="sub"?"🔗 Sub":"General"}</span></td>
+                    <td style={s.td}><span style={{...s.badge,background:tColor,color:tText}}>{row.kind==="core"?"Core":row.kind==="sub"?"Sub":"General"}</span></td>
                     <td style={s.td}><span style={{fontWeight:800,color:row.stat.clicks>0?C.green:"#ccc",fontSize:"1rem"}}>{row.stat.clicks}</span></td>
                     <td style={s.td}><span style={{fontWeight:800,color:row.stat.orders>0?C.greenDark:"#ccc",fontSize:"1rem"}}>{row.stat.orders}</span></td>
                     <td style={s.td}>
@@ -549,7 +570,7 @@ export default function AdminDashboard(){
                         ?<span style={{color:C.green,fontWeight:700,fontSize:"0.8rem"}}>✓ Registered</span>
                         :<span style={{color:"#ccc",fontSize:"0.8rem"}}>Not registered</span>}
                     </td>
-                    <td style={s.td}><button style={{...s.cpBtn,background:C.greenDark,color:C.yellow,border:"none"}} onClick={()=>openLog(row.id,row.name)}>📝 Log</button></td>
+                    <td style={s.td}><button style={{...s.cpBtn,background:C.greenDark,color:C.yellow,border:"none"}} onClick={()=>openLog(row.id,row.name)}>Log</button></td>
                   </tr>
                 );})}
                 {tRows.length===0&&!sLoad&&<tr><td colSpan={8} style={s.empty}>No ambassadors found. Stats appear once links are clicked.</td></tr>}
@@ -561,20 +582,20 @@ export default function AdminDashboard(){
 
         {/* ════ MANAGE ════ */}
         {tab==="manage"&&(<>
-          <div style={s.secLabel}>⚙️ Manage Ambassador Slots</div>
-          <div style={s.info}><span style={s.infoIcon}>💡</span><p style={{fontSize:"0.85rem",lineHeight:1.7}}>Edit or add slots below — changes apply instantly to all tabs. Click <strong>🚀 Deploy</strong> to push live (~30s).</p></div>
+          <div style={s.secLabel}>Manage Ambassador Slots</div>
+          <div style={s.info}><div><p style={{fontSize:"0.85rem",lineHeight:1.7}}>Edit or add slots — changes apply instantly to all tabs. Click <strong>Deploy to GitHub</strong> to push live (approx. 30 seconds).</p></div></div>
           <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap" as const,alignItems:"center"}}>
             <input style={{...s.search,maxWidth:260}} placeholder="Search slots…" value={mSearch} onChange={e=>setMSearch(e.target.value)}/>
-            <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{setNewId(nextId(data.slots));setNewName("");setNewSchool("");setNewSt("active");setAddErr("");setAddOpen(true);}}>➕ Add Ambassador</button>
+            <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{setNewId(nextId(data.slots));setNewName("");setNewSchool("");setNewSt("active");setAddErr("");setAddOpen(true);}}>Add Ambassador</button>
             <button style={{...s.actBtn,background:dep==="ok"?C.green:dep==="fail"?C.red:C.greenDark,color:C.yellow,marginLeft:"auto",opacity:dep==="busy"?0.7:1}} onClick={doDeploy} disabled={dep==="busy"}>
-              {dep==="busy"?"⏳ Deploying…":dep==="ok"?"✅ Deployed!":dep==="fail"?"❌ Retry":"🚀 Deploy to GitHub"}
+              {dep==="busy"?"Deploying…":dep==="ok"?"Deployed":dep==="fail"?"Retry Deploy":"Deploy to GitHub"}
             </button>
           </div>
           {depMsg&&<div style={{...s.banner,borderColor:dep==="fail"?C.red:C.green,background:dep==="fail"?C.redLight:C.white,color:dep==="fail"?C.red:C.greenDark,marginBottom:16}}>{depMsg}</div>}
 
           {/* GitHub settings */}
           <div style={{...s.settBox,marginBottom:20}}>
-            <button style={s.settToggle} onClick={()=>setGhOpen(o=>!o)}>🔑 GitHub Deploy Settings {ghOpen?"▲":"▼"}</button>
+            <button style={s.settToggle} onClick={()=>setGhOpen(o=>!o)}>GitHub Deploy Settings {ghOpen?"▲":"▼"}</button>
             {ghOpen&&(
               <div style={{padding:"20px 18px"}}>
                 {([{l:"GitHub Username",k:"owner",p:"e.g. PrinceAmadin"},{l:"Repository Name",k:"repo",p:"e.g. EduCraft-Ambassador"},{l:"Personal Access Token",k:"token",p:"ghp_xxxx…"}] as const).map(f=>(
@@ -583,7 +604,7 @@ export default function AdminDashboard(){
                     <input style={s.fInp} type={f.k==="token"?"password":"text"} placeholder={f.p} value={gh[f.k]} onChange={e=>setGh({...gh,[f.k]:e.target.value})}/>
                   </div>
                 ))}
-                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{lsSet(LS_G,gh);setGhOpen(false);setDepMsg("✅ Saved!");}}>Save</button>
+                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{lsSet(LS_G,gh);setGhOpen(false);setDepMsg("Settings saved.");}}>Save</button>
               </div>
             )}
           </div>
@@ -591,7 +612,7 @@ export default function AdminDashboard(){
           {/* Add form */}
           {addOpen&&(
             <div style={s.editCard}>
-              <div style={{fontWeight:800,color:C.greenDark,marginBottom:16}}>➕ Add New Ambassador</div>
+              <div style={{fontWeight:700,color:C.greenDark,marginBottom:16}}>Add New Ambassador</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}}>
                 {[{l:"Slot ID",v:newId,s:setNewId,p:"e.g. 067"},{l:"Full Name",v:newName,s:setNewName,p:"Name"},{l:"School",v:newSchool,s:setNewSchool,p:"EUI, UNIBEN…"}].map(f=>(
                   <div key={f.l}><label style={s.fLabel}>{f.l}</label><input style={s.fInp} value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p}/></div>
@@ -602,7 +623,7 @@ export default function AdminDashboard(){
               </div>
               {addErr&&<p style={{color:C.red,fontSize:"0.82rem",marginTop:10}}>⚠️ {addErr}</p>}
               <div style={{display:"flex",gap:8,marginTop:16}}>
-                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={saveNew}>✓ Add</button>
+                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={saveNew}>Add</button>
                 <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setAddOpen(false);setAddErr("");}}>Cancel</button>
               </div>
             </div>
@@ -611,7 +632,7 @@ export default function AdminDashboard(){
           {/* Edit form */}
           {editId&&(
             <div style={s.editCard}>
-              <div style={{fontWeight:800,color:C.greenDark,marginBottom:16}}>✏️ Editing <span style={{color:C.green}}>EduCraftA-{editId}</span></div>
+              <div style={{fontWeight:800,color:C.greenDark,marginBottom:16}}>Editing <span style={{color:C.green}}>EduCraftA-{editId}</span></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}}>
                 {[{l:"Name",v:editName,s:setEditName,p:"Name"},{l:"School",v:editSchool,s:setEditSchool,p:"EUI…"}].map(f=>(
                   <div key={f.l}><label style={s.fLabel}>{f.l}</label><input style={s.fInp} value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p}/></div>
@@ -621,23 +642,39 @@ export default function AdminDashboard(){
                 </div></div>
               </div>
               <div style={{display:"flex",gap:8,marginTop:16}}>
-                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={saveEdit}>✓ Save</button>
+                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={saveEdit}>Save</button>
                 <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>setEditId(null)}>Cancel</button>
               </div>
             </div>
           )}
 
+          {resetMsg&&<div style={{...s.banner,borderColor:resetSt==="fail"?C.red:C.green,background:resetSt==="fail"?C.redLight:C.white,color:resetSt==="fail"?C.red:C.greenDark,marginBottom:16}}>{resetMsg}</div>}
           <div style={s.tableWrap}>
             <table style={s.table}>
-              <thead><tr style={s.thead}>{["Slot ID","Name","School","Status","Edit"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+              <thead><tr style={s.thead}>{["Slot ID","Name","School","Status","Edit","Reset Reg."].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {mRows.map(([id,sl],i)=>(
                   <tr key={id} style={{...s.tr,background:i%2===0?C.white:C.milk,outline:editId===id?`2px solid ${C.green}`:"none"}}>
                     <td style={s.td}><span style={s.slotId}>EduCraftA-{id}</span></td>
                     <td style={s.td}>{sl.name?<strong style={{color:C.greenDark}}>{sl.name}</strong>:<em style={{color:"#bbb"}}>— Vacant —</em>}</td>
                     <td style={s.td}><span style={s.schoolTag}>{sl.school||"—"}</span></td>
-                    <td style={s.td}><span style={{...s.badge,background:sl.status==="active"?C.green:C.yellowDark,color:sl.status==="active"?C.white:C.greenDark}}>{sl.status==="active"?"● Active":"○ Vacant"}</span></td>
-                    <td style={s.td}><button style={{...s.cpBtn,...(editId===id?{background:C.yellow,color:C.greenDark}:{})}} onClick={()=>editId===id?setEditId(null):startEdit(id)}>{editId===id?"Editing…":"✏️ Edit"}</button></td>
+                    <td style={s.td}><span style={{...s.badge,background:sl.status==="active"?C.green:C.yellowDark,color:sl.status==="active"?C.white:C.greenDark}}>{sl.status==="active"?"Active":"Vacant"}</span></td>
+                    <td style={s.td}><button style={{...s.cpBtn,...(editId===id?{background:C.yellow,color:C.greenDark}:{})}} onClick={()=>editId===id?setEditId(null):startEdit(id)}>{editId===id?"Editing…":"Edit"}</button></td>
+                    <td style={s.td}>
+                      {resetId===id?(
+                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                          <span style={{fontSize:"0.76rem",color:C.red,fontWeight:600}}>Clear registration?</span>
+                          <button style={{...s.cpBtn,background:C.red,color:C.white,border:"none",fontSize:"0.74rem",padding:"4px 10px"}} onClick={()=>resetSlot(id)} disabled={resetSt==="busy"}>
+                            {resetSt==="busy"?"Clearing…":"Confirm"}
+                          </button>
+                          <button style={{...s.cpBtn,fontSize:"0.74rem",padding:"4px 10px"}} onClick={()=>setResetId(null)}>Cancel</button>
+                        </div>
+                      ):(
+                        <button style={{...s.cpBtn,fontSize:"0.76rem",color:"#888",borderColor:"#ddd"}} onClick={()=>{setResetId(id);setResetSt("idle");setResetMsg("");}}>
+                          Reset
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
