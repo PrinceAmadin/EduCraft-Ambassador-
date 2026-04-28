@@ -1,45 +1,31 @@
-// api/stats.ts — Returns tracking stats for all ambassadors
-// Uses REDIS_URL (Redis Cloud). Protected by ADMIN_SECRET query param.
+// api/stats.ts — returns live tracking stats for all ambassador IDs
+// Conv% is calculated in the frontend as: round((orders / clicks) * 100)
+// This file just returns raw clicks and orders so the formula is always correct.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createClient } from "redis";
+import { getClient } from "./_redis";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
 
-  // Auth
-  const supplied       = (req.query.secret as string | undefined) ?? "";
-  const expectedSecret = process.env.ADMIN_SECRET ?? "";
-  if (expectedSecret && supplied !== expectedSecret) {
-    res.status(401).json({ error: "Unauthorized. Check your Admin Secret in Tracking Settings." });
-    return;
+  const supplied = (req.query.secret as string | undefined) ?? "";
+  const expected = process.env.ADMIN_SECRET ?? "";
+  if (expected && supplied !== expected) {
+    res.status(401).json({ error: "Unauthorized. Check your Admin Secret in Tracking Settings." }); return;
   }
-
-  const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) {
-    res.status(503).json({
-      error: "Tracking not configured. Add REDIS_URL to your Vercel environment variables.",
-    });
-    return;
+  if (!process.env.REDIS_URL) {
+    res.status(503).json({ error: "Tracking not configured. Add REDIS_URL to your Vercel environment variables." }); return;
   }
 
   try {
-    const client = createClient({ url: redisUrl });
-    client.on("error", () => { /* suppress */ });
-    await client.connect();
+    const client = await getClient();
+    const ids    = await client.sMembers("ambassador_ids");
 
-    // Get all ambassador IDs that have ever been tracked
-    const ambassadorIds = await client.sMembers("ambassador_ids");
+    if (ids.length === 0) { await client.disconnect(); res.status(200).json({}); return; }
 
-    if (ambassadorIds.length === 0) {
-      await client.disconnect();
-      res.status(200).json({});
-      return;
-    }
-
-    // Fetch clicks, orders, profile for every ambassador in parallel
-    const results = await Promise.all(
-      ambassadorIds.map(async (id) => {
+    // Fetch clicks, orders, profile for every ID in parallel
+    const rows = await Promise.all(
+      ids.map(async id => {
         const [clicks, orders, profileStr] = await Promise.all([
           client.get(`clicks:${id}`),
           client.get(`orders:${id}`),
@@ -51,15 +37,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
     await client.disconnect();
 
-    // Build response
     const stats: Record<string, {
-      clicks: number;
-      orders: number;
-      email: string | null;
-      registeredName: string | null;
+      clicks: number; orders: number; email: string | null; registeredName: string | null;
     }> = {};
 
-    for (const { id, clicks, orders, profileStr } of results) {
+    for (const { id, clicks, orders, profileStr } of rows) {
       let email:          string | null = null;
       let registeredName: string | null = null;
 
@@ -73,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
       stats[id] = {
         clicks: parseInt(clicks  ?? "0", 10) || 0,
-        orders: parseInt(orders ?? "0", 10) || 0,
+        orders: parseInt(orders  ?? "0", 10) || 0,
         email,
         registeredName,
       };
@@ -81,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
     res.status(200).json(stats);
   } catch (err) {
-    console.error("Redis stats error:", err);
-    res.status(500).json({ error: "Failed to fetch stats. Check your REDIS_URL." });
+    console.error("Stats error:", err);
+    res.status(500).json({ error: "Failed to fetch tracking stats." });
   }
 }
