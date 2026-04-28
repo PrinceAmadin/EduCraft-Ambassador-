@@ -577,10 +577,10 @@ export default function AdminDashboard(){
             <button style={s.settToggle} onClick={()=>setGhOpen(o=>!o)}>🔑 GitHub Deploy Settings {ghOpen?"▲":"▼"}</button>
             {ghOpen&&(
               <div style={{padding:"20px 18px"}}>
-                {([{l:"GitHub Username",k:"owner",p:"e.g. PrinceAmadin"},{l:"Repository Name",k:"repo",p:"e.g. EduCraft-Ambassador"},{l:"Personal Access Token",k:"token",p:"ghp_xxxx…",t:"password"}] as const).map(f=>(
+                {([{l:"GitHub Username",k:"owner",p:"e.g. PrinceAmadin"},{l:"Repository Name",k:"repo",p:"e.g. EduCraft-Ambassador"},{l:"Personal Access Token",k:"token",p:"ghp_xxxx…"}] as const).map(f=>(
                   <div key={f.k} style={{marginBottom:12}}>
                     <label style={s.fLabel}>{f.l}</label>
-                    <input style={s.fInp} type={f.t||"text"} placeholder={f.p} value={gh[f.k]} onChange={e=>setGh({...gh,[f.k]:e.target.value})}/>
+                    <input style={s.fInp} type={f.k==="token"?"password":"text"} placeholder={f.p} value={gh[f.k]} onChange={e=>setGh({...gh,[f.k]:e.target.value})}/>
                   </div>
                 ))}
                 <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{lsSet(LS_G,gh);setGhOpen(false);setDepMsg("✅ Saved!");}}>Save</button>
