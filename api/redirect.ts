@@ -56,7 +56,7 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
     "046": { name: "Ayo (Bridget)",   school: "EUI",         status: "active" },
     "047": { name: "Raqeeb",          school: "EUI",         status: "active" },
     "048": { name: "Michael",         school: "EUI",         status: "active" },
-    "049": { name: "Maro",                school: "EUI",         status: "active"  },
+    "049": { name: "Maro",                school: "EUI",        status: "active"  },
     "050": { name: "Joshua (COE)",    school: "EUI",         status: "active" },
     "051": { name: "",                school: "EUI",         status: "vacant"  },
     "052": { name: "",                school: "EUI",         status: "vacant"  },
