@@ -1,14 +1,13 @@
 // api/redirect.ts
 // EduCraft Ambassador Redirect — Vercel Serverless Function
-// Self-contained: no external imports
+// Tracks every click in Upstash Redis before redirecting.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-// ─── Config ────────────────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
 const EDUCRAFT_WHATSAPP = "2347063421088"; // ✏️ EduCraft's official WhatsApp number
 
 // ─── General Ambassador Slots ──────────────────────────────────────────────────
-// ✏️ Keep in sync with src/ambassadors.ts
 const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {
   "001": { name: "Admins",          school: "Co-founders", status: "active" },
   "002": { name: "Noruwosa Zoe",    school: "UNIBEN",      status: "active" },
@@ -78,8 +77,7 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "066": { name: "",                school: "EUI",         status: "vacant"  },
 };
 
-// ─── Core Ambassadors (ECCA) ───────────────────────────────────────────────────
-// ✏️ Keep in sync with src/ambassadors.ts
+// ─── Core Ambassadors (ECCA) ──────────────────────────────────────────────────
 const CORE_AMBASSADORS: Record<string, { name: string; school: string }> = {
   "ECCA-001": { name: "Chidinma Victory", school: "EUI" },
   "ECCA-002": { name: "Debby",            school: "EUI" },
@@ -88,16 +86,37 @@ const CORE_AMBASSADORS: Record<string, { name: string; school: string }> = {
   "ECCA-005": { name: "General",          school: "Admin" },
 };
 
-// ─── Sub-Ambassadors (ECSA) ────────────────────────────────────────────────────
-// ✏️ Keep in sync with src/ambassadors.ts
+// ─── Sub-Ambassadors (ECSA) ───────────────────────────────────────────────────
 const SUB_AMBASSADORS: Record<string, { name: string; school: string; coreId: string }> = {
   "ECSA-001-001": { name: "Rita",     school: "Edwin Clark", coreId: "ECCA-001" },
   "ECSA-001-002": { name: "Praise",   school: "SDU",         coreId: "ECCA-001" },
   "ECSA-001-003": { name: "Queensly", school: "EUI",         coreId: "ECCA-001" },
 };
 
-// ─── Handler ──────────────────────────────────────────────────────────────────
-export default function handler(req: VercelRequest, res: VercelResponse): void {
+// ─── Click Tracking ───────────────────────────────────────────────────────────
+// Fire-and-forget: tracking errors NEVER affect redirects.
+async function trackClick(ambassadorId: string): Promise<void> {
+  const url   = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return; // tracking not yet configured — skip silently
+
+  try {
+    await fetch(`${url}/pipeline`, {
+      method:  "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      // INCR click counter + add to the global set of tracked IDs (for stats lookup)
+      body: JSON.stringify([
+        ["INCR", `clicks:${ambassadorId}`],
+        ["SADD", "ambassador_ids", ambassadorId],
+      ]),
+    });
+  } catch {
+    // Never propagate tracking errors upward
+  }
+}
+
+// ─── Handler ─────────────────────────────────────────────────────────────────
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const id   = req.query.id   as string | undefined;
   const type = req.query.type as string | undefined;
 
@@ -106,13 +125,14 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
     return;
   }
 
-  // ── Route: ECCA (Core Ambassador recruitment link) ─────────────────────────
+  // ── Route: ECCA (Core Ambassador recruitment link) ────────────────────────
   if (type === "ecca") {
     const core = CORE_AMBASSADORS[id];
     if (!core) {
       res.status(404).send(errorPage("❌ Not Found", "This Core Ambassador link does not exist."));
       return;
     }
+    await trackClick(id);
     const message = encodeURIComponent(
       `Hi EduCraft! I was brought in by ${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. 🎓`
     );
@@ -120,38 +140,37 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
     return;
   }
 
-  // ── Route: ECSA (Sub-Ambassador client referral link) ──────────────────────
+  // ── Route: ECSA (Sub-Ambassador client referral link) ─────────────────────
   if (type === "ecsa") {
-    const sub  = SUB_AMBASSADORS[id];
+    const sub = SUB_AMBASSADORS[id];
     if (!sub) {
       res.status(404).send(errorPage("❌ Not Found", "This Sub-Ambassador link does not exist."));
       return;
     }
-    const core    = CORE_AMBASSADORS[sub.coreId];
+    await trackClick(id);
+    const core     = CORE_AMBASSADORS[sub.coreId];
     const coreName = core ? ` (via ${core.name})` : "";
-    const message = encodeURIComponent(
+    const message  = encodeURIComponent(
       `Hi EduCraft! I was referred by ${sub.name}${coreName}. I'd like to place an order on the following Services:`
     );
     res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${message}`);
     return;
   }
 
-  // ── Route: General Ambassador client referral link ─────────────────────────
+  // ── Route: General Ambassador client referral link ────────────────────────
   const slot = SLOTS[id];
   if (!slot) {
     res.status(404).send(errorPage("❌ Not Found", "This ambassador link does not exist. Please contact EduCraft."));
     return;
   }
 
-  if (slot.status === "vacant") {
-    const message = encodeURIComponent(`Hi EduCraft! I'd like to place an order on the following Services:`);
-    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${message}`);
-    return;
-  }
+  await trackClick(id);
 
-  const message = encodeURIComponent(
-    `Hi EduCraft! I was referred by ${slot.name}. I'd like to place an order on the following Services:`
-  );
+  const message =
+    slot.status === "vacant" || !slot.name
+      ? encodeURIComponent("Hi EduCraft! I'd like to place an order on the following Services:")
+      : encodeURIComponent(`Hi EduCraft! I was referred by ${slot.name}. I'd like to place an order on the following Services:`);
+
   res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${message}`);
 }
 
@@ -181,7 +200,7 @@ function errorPage(title: string, body: string): string {
     <div class="icon">🎓</div>
     <h1>${title}</h1>
     <p>${body}</p>
-    <div class="brand">EDUCRAFT — Academic & Technical Documentation Experts</div>
+    <div class="brand">EDUCRAFT — Academic &amp; Technical Documentation Experts</div>
   </div>
 </body>
 </html>`;

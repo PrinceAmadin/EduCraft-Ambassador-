@@ -1,8 +1,7 @@
 // src/AdminDashboard.tsx
-// 🔑 KEY ARCHITECTURE: liveData state is the single source of truth.
-//    ALL tabs (Ambassadors, Schools, Core, Sub, Manage) read from liveData.
-//    Edits in Manage → liveData updates → ALL tabs re-render instantly.
-//    Deploy button → pushes both files to GitHub → Vercel redeploys in ~30s.
+// Single source of truth: liveData state feeds ALL tabs.
+// Tracking tab: fetches live click/order stats from Redis via /api/stats.
+// Log Order: calls /api/track-order → logs order + emails ambassador.
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import seedAmbassadors from "./ambassadors";
@@ -23,10 +22,25 @@ const C = {
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-type TabType     = "ambassadors" | "schools" | "core" | "sub" | "manage";
+type TabType     = "ambassadors" | "schools" | "core" | "sub" | "tracking" | "manage";
 type FilterType  = "all" | "active" | "vacant";
 type DeployState = "idle" | "deploying" | "success" | "error";
 interface SlotRow { id: string; slot: AmbassadorSlot; }
+
+interface TrackingStat {
+  clicks:         number;
+  orders:         number;
+  email:          string | null;
+  registeredName: string | null;
+}
+
+interface TrackingRow {
+  id:     string;
+  name:   string;
+  school: string;
+  type:   "general" | "core" | "sub";
+  stat:   TrackingStat;
+}
 
 // ── School display names ───────────────────────────────────────────────────────
 const SCHOOL_NAMES: Record<string, string> = {
@@ -42,31 +56,22 @@ const SCHOOL_NAMES: Record<string, string> = {
 };
 
 // ── Local storage helpers ──────────────────────────────────────────────────────
-const LS_DATA   = "educraft_live_data_v4";
-const LS_GH     = "educraft_github_settings";
+const LS_DATA = "educraft_live_data_v4";
+const LS_GH   = "educraft_github_settings";
+const LS_SEC  = "ec_admin_secret";
 
-function loadData(): AmbassadorData | null {
-  try { const r = localStorage.getItem(LS_DATA); return r ? JSON.parse(r) : null; }
-  catch { return null; }
-}
-function saveData(d: AmbassadorData) {
-  try { localStorage.setItem(LS_DATA, JSON.stringify(d)); } catch { /* noop */ }
-}
-function loadGH() {
-  try { const r = localStorage.getItem(LS_GH); return r ? JSON.parse(r) : { owner: "", repo: "", token: "" }; }
-  catch { return { owner: "", repo: "", token: "" }; }
-}
-function saveGH(g: { owner: string; repo: string; token: string }) {
-  try { localStorage.setItem(LS_GH, JSON.stringify(g)); } catch { /* noop */ }
-}
+function loadData():  AmbassadorData | null { try { const r = localStorage.getItem(LS_DATA); return r ? JSON.parse(r) : null; } catch { return null; } }
+function saveData(d:  AmbassadorData)       { try { localStorage.setItem(LS_DATA, JSON.stringify(d)); }  catch { /**/ } }
+function loadGH()   { try { const r = localStorage.getItem(LS_GH);  return r ? JSON.parse(r) : { owner: "", repo: "", token: "" }; } catch { return { owner: "", repo: "", token: "" }; } }
+function saveGH(g:  { owner: string; repo: string; token: string }) { try { localStorage.setItem(LS_GH,  JSON.stringify(g)); } catch { /**/ } }
+function loadSec():   string { try { return localStorage.getItem(LS_SEC) || ""; } catch { return ""; } }
+function saveSec(s:   string) { try { localStorage.setItem(LS_SEC, s); } catch { /**/ } }
 
-// ── Code Generators ────────────────────────────────────────────────────────────
+// ── Code Generators (for GitHub Deploy) ───────────────────────────────────────
 function generateAmbassadorsTS(d: AmbassadorData): string {
-  const slotLines = Object.entries(d.slots).map(([id, s]) => {
-    const nm = JSON.stringify(s.name);
-    const sc = JSON.stringify(s.school);
-    return `    "${id}": { name: ${nm.padEnd(22)}, school: ${sc.padEnd(14)}, status: "${s.status}" },`;
-  }).join("\n");
+  const slotLines = Object.entries(d.slots).map(([id, s]) =>
+    `    "${id}": { name: ${JSON.stringify(s.name).padEnd(22)}, school: ${JSON.stringify(s.school).padEnd(14)}, status: "${s.status}" },`
+  ).join("\n");
 
   const coreLines = d.coreAmbassadors.map(c =>
     `    { id: "${c.id}", name: "${c.name}", school: "${c.school}", percentage: ${c.percentage} },`
@@ -76,186 +81,90 @@ function generateAmbassadorsTS(d: AmbassadorData): string {
     `    { id: "${s.id}", name: "${s.name}", school: "${s.school}", percentage: ${s.percentage}, coreId: "${s.coreId}" },`
   ).join("\n");
 
-  return `// src/ambassadors.ts
-// ✏️ Managed by EduCraft Admin Panel — do not edit manually
-
-export interface AmbassadorSlot {
-  name: string;
-  school: string;
-  status: "active" | "vacant";
-}
-
-export interface CoreAmbassador {
-  id: string;
-  name: string;
-  school: string;
-  percentage: number;
-}
-
-export interface SubAmbassador {
-  id: string;
-  name: string;
-  school: string;
-  percentage: number;
-  coreId: string;
-}
-
-export interface AmbassadorData {
-  educraft_whatsapp: string;
-  slots: Record<string, AmbassadorSlot>;
-  coreAmbassadors: CoreAmbassador[];
-  subAmbassadors: SubAmbassador[];
-}
+  return `// src/ambassadors.ts — Managed by EduCraft Admin Panel
+export interface AmbassadorSlot { name: string; school: string; status: "active" | "vacant"; }
+export interface CoreAmbassador { id: string; name: string; school: string; percentage: number; }
+export interface SubAmbassador  { id: string; name: string; school: string; percentage: number; coreId: string; }
+export interface AmbassadorData { educraft_whatsapp: string; slots: Record<string, AmbassadorSlot>; coreAmbassadors: CoreAmbassador[]; subAmbassadors: SubAmbassador[]; }
 
 const ambassadors: AmbassadorData = {
   educraft_whatsapp: "${d.educraft_whatsapp}",
-
-  slots: {
-${slotLines}
-  },
-
-  coreAmbassadors: [
-${coreLines}
-  ],
-
-  subAmbassadors: [
-${subLines}
-  ],
+  slots: {\n${slotLines}\n  },
+  coreAmbassadors: [\n${coreLines}\n  ],
+  subAmbassadors:  [\n${subLines}\n  ],
 };
-
 export default ambassadors;
 `;
 }
 
 function generateRedirectTS(d: AmbassadorData): string {
-  const slotLines = Object.entries(d.slots).map(([id, s]) => {
-    const nm = JSON.stringify(s.name);
-    const sc = JSON.stringify(s.school);
-    return `  "${id}": { name: ${nm}, school: ${sc}, status: "${s.status}" },`;
-  }).join("\n");
-
+  const slotLines = Object.entries(d.slots).map(([id, s]) =>
+    `  "${id}": { name: ${JSON.stringify(s.name)}, school: ${JSON.stringify(s.school)}, status: "${s.status}" },`
+  ).join("\n");
   const coreLines = d.coreAmbassadors.map(c =>
     `  "${c.id}": { name: "${c.name}", school: "${c.school}" },`
   ).join("\n");
-
   const subLines = d.subAmbassadors.map(s =>
     `  "${s.id}": { name: "${s.name}", school: "${s.school}", coreId: "${s.coreId}" },`
   ).join("\n");
 
   return `// api/redirect.ts — Auto-generated by EduCraft Admin Panel
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-
 const EDUCRAFT_WHATSAPP = "${d.educraft_whatsapp}";
+const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {\n${slotLines}\n};
+const CORE_AMBASSADORS: Record<string, { name: string; school: string }> = {\n${coreLines}\n};
+const SUB_AMBASSADORS: Record<string, { name: string; school: string; coreId: string }> = {\n${subLines}\n};
 
-const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {
-${slotLines}
-};
-
-const CORE_AMBASSADORS: Record<string, { name: string; school: string }> = {
-${coreLines}
-};
-
-const SUB_AMBASSADORS: Record<string, { name: string; school: string; coreId: string }> = {
-${subLines}
-};
-
-export default function handler(req: VercelRequest, res: VercelResponse): void {
-  const id   = req.query.id   as string | undefined;
-  const type = req.query.type as string | undefined;
-
-  if (!id) { res.status(400).send(errPage("No slot ID provided.")); return; }
-
-  if (type === "ecca") {
-    const core = CORE_AMBASSADORS[id];
-    if (!core) { res.status(404).send(errPage("Core Ambassador link not found.")); return; }
-    const msg = encodeURIComponent(\`Hi EduCraft! I was brought in by \${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. 🎓\`);
-    res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${msg}\`);
-    return;
-  }
-
-  if (type === "ecsa") {
-    const sub = SUB_AMBASSADORS[id];
-    if (!sub) { res.status(404).send(errPage("Sub-Ambassador link not found.")); return; }
-    const core = CORE_AMBASSADORS[sub.coreId];
-    const via  = core ? \` (via \${core.name})\` : "";
-    const msg  = encodeURIComponent(\`Hi EduCraft! I was referred by \${sub.name}\${via}. I'd like to place an order on the following Services:\`);
-    res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${msg}\`);
-    return;
-  }
-
-  const slot = SLOTS[id];
-  if (!slot) { res.status(404).send(errPage("This ambassador link does not exist.")); return; }
-
-  const msg = slot.status === "vacant" || !slot.name
-    ? encodeURIComponent("Hi EduCraft! I'd like to place an order on the following Services:")
-    : encodeURIComponent(\`Hi EduCraft! I was referred by \${slot.name}. I'd like to place an order on the following Services:\`);
-
-  res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${msg}\`);
+async function trackClick(id: string): Promise<void> {
+  const url = process.env.UPSTASH_REDIS_REST_URL, token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return;
+  try { await fetch(\`\${url}/pipeline\`, { method: "POST", headers: { Authorization: \`Bearer \${token}\`, "Content-Type": "application/json" }, body: JSON.stringify([["INCR", \`clicks:\${id}\`], ["SADD", "ambassador_ids", id]]) }); } catch {}
 }
 
-function errPage(body: string): string {
-  return \`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>EduCraft</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',sans-serif;background:#FFF9ED;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}.card{background:#fff;border:2px solid #E0B846;border-radius:16px;padding:48px 40px;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(13,87,83,.10)}.icon{font-size:2.5rem;margin-bottom:16px}h1{font-size:1.3rem;margin-bottom:12px;color:#ef4444}p{color:#0D5753;line-height:1.6;font-size:.95rem}.brand{margin-top:24px;font-size:.75rem;color:#12827c;font-weight:700;letter-spacing:.05em}</style></head><body><div class="card"><div class="icon">🎓</div><h1>❌ Link Error</h1><p>\${body}</p><div class="brand">EDUCRAFT</div></div></body></html>\`;
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  const id = req.query.id as string | undefined, type = req.query.type as string | undefined;
+  if (!id) { res.status(400).send("Invalid link."); return; }
+  if (type === "ecca") {
+    const core = CORE_AMBASSADORS[id]; if (!core) { res.status(404).send("Not found."); return; }
+    await trackClick(id);
+    res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${encodeURIComponent(\`Hi EduCraft! I was brought in by \${core.name}. I'd love to know more about the EduCraft Ambassadorship Program! 🎓\`)}\`); return;
+  }
+  if (type === "ecsa") {
+    const sub = SUB_AMBASSADORS[id]; if (!sub) { res.status(404).send("Not found."); return; }
+    await trackClick(id);
+    const via = CORE_AMBASSADORS[sub.coreId] ? \` (via \${CORE_AMBASSADORS[sub.coreId].name})\` : "";
+    res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${encodeURIComponent(\`Hi EduCraft! I was referred by \${sub.name}\${via}. I'd like to place an order on the following Services:\`)}\`); return;
+  }
+  const slot = SLOTS[id]; if (!slot) { res.status(404).send("Not found."); return; }
+  await trackClick(id);
+  const msg = slot.status === "vacant" || !slot.name ? "Hi EduCraft! I'd like to place an order on the following Services:" : \`Hi EduCraft! I was referred by \${slot.name}. I'd like to place an order on the following Services:\`;
+  res.redirect(302, \`https://wa.me/\${EDUCRAFT_WHATSAPP}?text=\${encodeURIComponent(msg)}\`);
 }
 `;
 }
 
 // ── GitHub Deploy ──────────────────────────────────────────────────────────────
-async function githubDeploy(
-  owner: string,
-  repo: string,
-  token: string,
-  liveData: AmbassadorData,
-  onStatus: (msg: string) => void
-): Promise<void> {
-  const headers = {
-    "Authorization": `token ${token}`,
-    "Accept": "application/vnd.github.v3+json",
-    "Content-Type": "application/json",
-  };
+async function githubDeploy(owner: string, repo: string, token: string, liveData: AmbassadorData, onStatus: (m: string) => void): Promise<void> {
+  const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", "Content-Type": "application/json" };
   const base = `https://api.github.com/repos/${owner}/${repo}/contents`;
+  const b64 = (s: string) => btoa(unescape(encodeURIComponent(s)));
+  const getSHA = async (p: string) => { const r = await fetch(`${base}/${p}`, { headers }); if (!r.ok) throw new Error(`Cannot find ${p} in repo.`); return (await r.json()).sha as string; };
+  const putFile = async (p: string, content: string, sha: string) => { const r = await fetch(`${base}/${p}`, { method: "PUT", headers, body: JSON.stringify({ message: "🤖 Update via EduCraft Admin Panel", content: b64(content), sha }) }); if (!r.ok) { const e = await r.json(); throw new Error(e.message || `Failed to update ${p}`); } };
 
-  const toBase64 = (str: string) => btoa(unescape(encodeURIComponent(str)));
-
-  const getFileSHA = async (path: string) => {
-    const res = await fetch(`${base}/${path}`, { headers });
-    if (!res.ok) throw new Error(`Cannot find ${path} in repo. Check your settings.`);
-    const json = await res.json();
-    return json.sha as string;
-  };
-
-  const putFile = async (path: string, content: string, sha: string) => {
-    const res = await fetch(`${base}/${path}`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify({
-        message: "🤖 Update ambassador data via EduCraft Admin Panel",
-        content: toBase64(content),
-        sha,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.message || `Failed to update ${path}`);
-    }
-  };
-
-  onStatus("📡 Connecting to GitHub...");
-  const aSHA = await getFileSHA("src/ambassadors.ts");
-  onStatus("📝 Updating ambassadors.ts...");
+  onStatus("📡 Connecting to GitHub…");
+  const aSHA = await getSHA("src/ambassadors.ts");
+  onStatus("📝 Updating ambassadors.ts…");
   await putFile("src/ambassadors.ts", generateAmbassadorsTS(liveData), aSHA);
-
-  onStatus("📝 Updating api/redirect.ts...");
-  const rSHA = await getFileSHA("api/redirect.ts");
+  onStatus("📝 Updating api/redirect.ts…");
+  const rSHA = await getSHA("api/redirect.ts");
   await putFile("api/redirect.ts", generateRedirectTS(liveData), rSHA);
-
-  onStatus("✅ Both files pushed! Vercel is rebuilding now (~30s)...");
+  onStatus("✅ Both files pushed! Vercel is rebuilding (~30s)…");
 }
 
-// ── Next available slot ID ─────────────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────────────────────
 function nextSlotId(slots: Record<string, AmbassadorSlot>): string {
   const nums = Object.keys(slots).map(k => parseInt(k, 10)).filter(n => !isNaN(n));
-  const max  = nums.length ? Math.max(...nums) : 0;
-  return String(max + 1).padStart(3, "0");
+  return String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3, "0");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -263,55 +172,65 @@ function nextSlotId(slots: Record<string, AmbassadorSlot>): string {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function AdminDashboard() {
   // ── Single source of truth ────────────────────────────────────────────────
-  const [liveData, setLiveDataRaw] = useState<AmbassadorData>(() =>
-    loadData() ?? { ...seedAmbassadors }
-  );
-
-  const setLiveData = useCallback((next: AmbassadorData) => {
-    setLiveDataRaw(next);
-    saveData(next);
-  }, []);
+  const [liveData, setLiveDataRaw] = useState<AmbassadorData>(() => loadData() ?? { ...seedAmbassadors });
+  const setLiveData = useCallback((next: AmbassadorData) => { setLiveDataRaw(next); saveData(next); }, []);
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  const [tab,       setTab]       = useState<TabType>("ambassadors");
-  const [filter,    setFilter]    = useState<FilterType>("all");
-  const [search,    setSearch]    = useState("");
-  const [copied,    setCopied]    = useState<string | null>(null);
-  const [menuOpen,  setMenuOpen]  = useState(false);
-  const [isMobile,  setIsMobile]  = useState(window.innerWidth <= 640);
+  const [tab,      setTab]      = useState<TabType>("ambassadors");
+  const [filter,   setFilter]   = useState<FilterType>("all");
+  const [search,   setSearch]   = useState("");
+  const [copied,   setCopied]   = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 640);
 
-  // ── Manage: edit existing ─────────────────────────────────────────────────
+  // ── Manage state ──────────────────────────────────────────────────────────
   const [editingId,   setEditingId]   = useState<string | null>(null);
   const [editName,    setEditName]    = useState("");
   const [editSchool,  setEditSchool]  = useState("");
-  const [editStatus,  setEditStatus]  = useState<"active" | "vacant">("active");
+  const [editStatus,  setEditStatus]  = useState<"active"|"vacant">("active");
   const [manageSearch, setManageSearch] = useState("");
-
-  // ── Manage: add new ambassador ────────────────────────────────────────────
-  const [showAddForm,   setShowAddForm]   = useState(false);
-  const [newId,         setNewId]         = useState("");
-  const [newName,       setNewName]       = useState("");
-  const [newSchool,     setNewSchool]     = useState("");
-  const [newStatus,     setNewStatus]     = useState<"active" | "vacant">("active");
-  const [addError,      setAddError]      = useState("");
-
-  // ── GitHub deploy ─────────────────────────────────────────────────────────
-  const [gh, setGhRaw] = useState(loadGH());
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newId,       setNewId]       = useState("");
+  const [newName,     setNewName]     = useState("");
+  const [newSchool,   setNewSchool]   = useState("");
+  const [newStatus,   setNewStatus]   = useState<"active"|"vacant">("active");
+  const [addError,    setAddError]    = useState("");
+  const [gh, setGhRaw]               = useState(loadGH());
   const [deployState, setDeployState] = useState<DeployState>("idle");
   const [deployMsg,   setDeployMsg]   = useState("");
   const [showGhSettings, setShowGhSettings] = useState(false);
-
   const setGh = (next: typeof gh) => { setGhRaw(next); saveGH(next); };
 
+  // ── Tracking state ────────────────────────────────────────────────────────
+  const [trackingStats,   setTrackingStats]   = useState<Record<string, TrackingStat>>({});
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingError,   setTrackingError]   = useState("");
+  const [adminSecret, setAdminSecretRaw]      = useState(loadSec());
+  const setAdminSecret = (v: string) => { setAdminSecretRaw(v); saveSec(v); };
+  const [showTrackingSettings, setShowTrackingSettings] = useState(false);
+  const [trackSearch, setTrackSearch] = useState("");
+
+  // Log-order modal state
+  const [logSlot,       setLogSlot]       = useState<string | null>(null);
+  const [logName,       setLogName]       = useState("");
+  const [logDesc,       setLogDesc]       = useState("");
+  const [logStatus,     setLogStatus]     = useState<"idle"|"loading"|"success"|"error">("idle");
+  const [logMsg,        setLogMsg]        = useState("");
+
   useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth <= 640);
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
+    const h = () => setIsMobile(window.innerWidth <= 640);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
   }, []);
+
+  // Auto-fetch stats when switching to Tracking tab
+  useEffect(() => {
+    if (tab === "tracking") fetchStats();
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const baseURL = window.location.origin;
 
-  // ── Computed values ───────────────────────────────────────────────────────
+  // ── Computed ──────────────────────────────────────────────────────────────
   const totalActive = Object.values(liveData.slots).filter(s => s.status === "active").length;
   const totalVacant = Object.values(liveData.slots).filter(s => s.status === "vacant").length;
   const total       = Object.keys(liveData.slots).length;
@@ -343,6 +262,36 @@ export default function AdminDashboard() {
     }),
   [liveData.slots, manageSearch]);
 
+  // Tracking tab rows: all active ambassadors merged with Redis stats
+  const trackingRows: TrackingRow[] = useMemo(() => {
+    const blank = (): TrackingStat => ({ clicks: 0, orders: 0, email: null, registeredName: null });
+    const rows: TrackingRow[] = [];
+
+    Object.entries(liveData.slots)
+      .filter(([, s]) => s.status === "active" && s.name)
+      .forEach(([id, s]) => rows.push({ id, name: s.name, school: s.school, type: "general",
+        stat: trackingStats[id] ?? blank() }));
+
+    liveData.coreAmbassadors.forEach(ca =>
+      rows.push({ id: ca.id, name: ca.name, school: ca.school, type: "core",
+        stat: trackingStats[ca.id] ?? blank() }));
+
+    liveData.subAmbassadors.forEach(sa =>
+      rows.push({ id: sa.id, name: sa.name, school: sa.school, type: "sub",
+        stat: trackingStats[sa.id] ?? blank() }));
+
+    const q = trackSearch.toLowerCase();
+    const filtered = q
+      ? rows.filter(r => r.id.toLowerCase().includes(q) || r.name.toLowerCase().includes(q) || r.school.toLowerCase().includes(q))
+      : rows;
+
+    return filtered.sort((a, b) => (b.stat.clicks + b.stat.orders * 5) - (a.stat.clicks + a.stat.orders * 5));
+  }, [liveData, trackingStats, trackSearch]);
+
+  const totalClicks      = trackingRows.reduce((s, r) => s + r.stat.clicks, 0);
+  const totalOrders      = trackingRows.reduce((s, r) => s + r.stat.orders, 0);
+  const registeredCount  = trackingRows.filter(r => r.stat.email !== null).length;
+
   // ── Handlers ──────────────────────────────────────────────────────────────
   const copyLink = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -350,54 +299,79 @@ export default function AdminDashboard() {
     setTimeout(() => setCopied(null), 2000);
   };
 
+  const fetchStats = async () => {
+    setTrackingLoading(true);
+    setTrackingError("");
+    try {
+      const qs  = adminSecret ? `?secret=${encodeURIComponent(adminSecret)}` : "";
+      const res = await fetch(`/api/stats${qs}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load tracking data.");
+      setTrackingStats(data);
+    } catch (err) {
+      setTrackingError((err as Error).message);
+    } finally {
+      setTrackingLoading(false);
+    }
+  };
+
+  const openLogOrder = (id: string, name: string) => {
+    setLogSlot(id); setLogName(name); setLogDesc("");
+    setLogStatus("idle"); setLogMsg("");
+  };
+
+  const handleLogOrder = async () => {
+    if (!logSlot) return;
+    setLogStatus("loading");
+    try {
+      const res = await fetch("/api/track-order", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ slotId: logSlot, jobDesc: logDesc, adminSecret }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to log order.");
+      setLogStatus("success");
+      setLogMsg(
+        data.emailSent
+          ? `✅ Logged! Commission email sent to ${data.emailTo}`
+          : "✅ Order logged. (Ambassador hasn't registered their email yet)"
+      );
+      // Update local stats immediately
+      setTrackingStats(prev => ({
+        ...prev,
+        [logSlot]: { ...((prev[logSlot]) ?? { clicks: 0, email: null, registeredName: null }), orders: (prev[logSlot]?.orders ?? 0) + 1 },
+      }));
+      setTimeout(() => { setLogSlot(null); setLogStatus("idle"); setLogMsg(""); }, 4000);
+    } catch (err) {
+      setLogStatus("error");
+      setLogMsg(`❌ ${(err as Error).message}`);
+    }
+  };
+
   const startEdit = (id: string) => {
     const slot = liveData.slots[id];
     setEditingId(id); setEditName(slot.name); setEditSchool(slot.school); setEditStatus(slot.status);
   };
-
   const saveEdit = () => {
     if (!editingId) return;
-    setLiveData({
-      ...liveData,
-      slots: { ...liveData.slots, [editingId]: { name: editName, school: editSchool, status: editStatus } },
-    });
+    setLiveData({ ...liveData, slots: { ...liveData.slots, [editingId]: { name: editName, school: editSchool, status: editStatus } } });
     setEditingId(null);
   };
-
-  const openAddForm = () => {
-    setNewId(nextSlotId(liveData.slots));
-    setNewName(""); setNewSchool(""); setNewStatus("active"); setAddError("");
-    setShowAddForm(true);
-  };
-
+  const openAddForm = () => { setNewId(nextSlotId(liveData.slots)); setNewName(""); setNewSchool(""); setNewStatus("active"); setAddError(""); setShowAddForm(true); };
   const saveNewAmbassador = () => {
     const id = newId.trim().padStart(3, "0");
-    if (!id)        { setAddError("Slot ID is required."); return; }
-    if (!newName.trim()) { setAddError("Name is required."); return; }
-    if (liveData.slots[id]) { setAddError(`Slot ${id} already exists. Choose a different ID.`); return; }
-    setLiveData({
-      ...liveData,
-      slots: { ...liveData.slots, [id]: { name: newName.trim(), school: newSchool.trim(), status: newStatus } },
-    });
-    setShowAddForm(false);
-    setAddError("");
+    if (!id) { setAddError("Slot ID required."); return; }
+    if (!newName.trim()) { setAddError("Name required."); return; }
+    if (liveData.slots[id]) { setAddError(`Slot ${id} already exists.`); return; }
+    setLiveData({ ...liveData, slots: { ...liveData.slots, [id]: { name: newName.trim(), school: newSchool.trim(), status: newStatus } } });
+    setShowAddForm(false); setAddError("");
   };
-
   const handleDeploy = async () => {
-    if (!gh.owner || !gh.repo || !gh.token) {
-      setShowGhSettings(true);
-      setDeployMsg("⚠️ Please fill in your GitHub settings below first.");
-      return;
-    }
-    setDeployState("deploying");
-    setDeployMsg("Starting deploy...");
-    try {
-      await githubDeploy(gh.owner, gh.repo, gh.token, liveData, setDeployMsg);
-      setDeployState("success");
-    } catch (err) {
-      setDeployState("error");
-      setDeployMsg(`❌ ${(err as Error).message}`);
-    }
+    if (!gh.owner || !gh.repo || !gh.token) { setShowGhSettings(true); setDeployMsg("⚠️ Fill in GitHub settings below first."); return; }
+    setDeployState("deploying"); setDeployMsg("Starting deploy…");
+    try { await githubDeploy(gh.owner, gh.repo, gh.token, liveData, setDeployMsg); setDeployState("success"); }
+    catch (err) { setDeployState("error"); setDeployMsg(`❌ ${(err as Error).message}`); }
   };
 
   // ── Nav ───────────────────────────────────────────────────────────────────
@@ -406,6 +380,7 @@ export default function AdminDashboard() {
     { key: "schools",     label: "Schools",     icon: "🏫" },
     { key: "core",        label: "Core (ECCA)", icon: "⭐" },
     { key: "sub",         label: "Sub (ECSA)",  icon: "🔗" },
+    { key: "tracking",    label: "Tracking",    icon: "📊" },
     { key: "manage",      label: "Manage",      icon: "⚙️" },
   ];
 
@@ -424,14 +399,12 @@ export default function AdminDashboard() {
         </div>
         <nav style={{ ...s.desktopNav, display: isMobile ? "none" : "flex" }}>
           {navTabs.map(t => (
-            <button key={t.key} style={{ ...s.navBtn, ...(tab === t.key ? s.navBtnActive : {}) }}
-              onClick={() => setTab(t.key)}>
+            <button key={t.key} style={{ ...s.navBtn, ...(tab === t.key ? s.navBtnActive : {}) }} onClick={() => setTab(t.key)}>
               {t.icon} {t.label}
             </button>
           ))}
         </nav>
-        <button style={{ ...s.hamburger, display: isMobile ? "flex" : "none" }}
-          onClick={() => setMenuOpen(o => !o)}>
+        <button style={{ ...s.hamburger, display: isMobile ? "flex" : "none" }} onClick={() => setMenuOpen(o => !o)}>
           {menuOpen ? "✕" : "☰"}
         </button>
       </header>
@@ -439,8 +412,7 @@ export default function AdminDashboard() {
       {menuOpen && (
         <div style={s.mobileMenu}>
           {navTabs.map(t => (
-            <button key={t.key}
-              style={{ ...s.mobileMenuItem, ...(tab === t.key ? s.mobileMenuItemActive : {}) }}
+            <button key={t.key} style={{ ...s.mobileMenuItem, ...(tab === t.key ? s.mobileMenuItemActive : {}) }}
               onClick={() => { setTab(t.key); setMenuOpen(false); }}>
               {t.icon} {t.label}
             </button>
@@ -452,9 +424,9 @@ export default function AdminDashboard() {
 
       <main style={s.main}>
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════
             TAB: AMBASSADORS
-        ══════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════ */}
         {tab === "ambassadors" && (<>
           <div style={s.statsRow}>
             <StatCard label="Total Slots" value={total}       color={C.green}     bg={C.milk} />
@@ -462,69 +434,43 @@ export default function AdminDashboard() {
             <StatCard label="Vacant"      value={totalVacant} color={C.greenDark} bg={C.yellow} />
             <StatCard label="Fill Rate"   value={`${Math.round((totalActive / total) * 100)}%`} color={C.white} bg={C.greenDark} />
           </div>
-
           <div style={s.sectionLabel}>Ambassador Slots</div>
           <div style={s.controls}>
-            <input style={s.searchInput} placeholder="Search by name, slot ID, or school…"
-              value={search} onChange={e => setSearch(e.target.value)} />
+            <input style={s.searchInput} placeholder="Search by name, slot ID, or school…" value={search} onChange={e => setSearch(e.target.value)} />
             <div style={s.filterGroup}>
-              {(["all", "active", "vacant"] as FilterType[]).map(f => (
-                <button key={f}
-                  style={{ ...s.filterBtn, ...(filter === f ? s.filterBtnActive : {}) }}
-                  onClick={() => setFilter(f)}>
+              {(["all","active","vacant"] as FilterType[]).map(f => (
+                <button key={f} style={{ ...s.filterBtn, ...(filter === f ? s.filterBtnActive : {}) }} onClick={() => setFilter(f)}>
                   {f.charAt(0).toUpperCase() + f.slice(1)}
                 </button>
               ))}
             </div>
           </div>
-
           <div style={s.tableWrapper}>
             <table style={s.table}>
               <thead>
-                <tr style={s.thead}>
-                  {["No.", "Slot ID", "Name", "School", "Status", "Link", "Copy"].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
+                <tr style={s.thead}>{["No.", "Slot ID", "Name", "School", "Status", "Link", "Copy"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
               </thead>
               <tbody>
                 {filteredSlots.map(({ id, slot }, i) => (
                   <tr key={id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk }}>
                     <td style={s.td}><span style={s.rowNum}>{parseInt(id)}.</span></td>
                     <td style={s.td}><span style={s.slotId}>EduCraftA-{id}</span></td>
-                    <td style={s.td}>
-                      {slot.status === "active" && slot.name
-                        ? <strong style={{ color: C.greenDark }}>{slot.name}</strong>
-                        : <em style={{ color: "#bbb" }}>— Unassigned —</em>}
-                    </td>
+                    <td style={s.td}>{slot.status === "active" && slot.name ? <strong style={{ color: C.greenDark }}>{slot.name}</strong> : <em style={{ color: "#bbb" }}>— Unassigned —</em>}</td>
                     <td style={s.td}><span style={s.schoolTag}>{slot.school || "—"}</span></td>
-                    <td style={s.td}>
-                      <span style={{ ...s.badge, background: slot.status === "active" ? C.green : C.yellowDark, color: slot.status === "active" ? C.white : C.greenDark }}>
-                        {slot.status === "active" ? "● Active" : "○ Vacant"}
-                      </span>
-                    </td>
+                    <td style={s.td}><span style={{ ...s.badge, background: slot.status === "active" ? C.green : C.yellowDark, color: slot.status === "active" ? C.white : C.greenDark }}>{slot.status === "active" ? "● Active" : "○ Vacant"}</span></td>
                     <td style={s.td}><span style={s.linkText}>/EduCraftA/{id}</span></td>
-                    <td style={s.td}>
-                      <button
-                        style={{ ...s.copyBtn, ...(copied === `a-${id}` ? s.copyBtnDone : {}) }}
-                        onClick={() => copyLink(`${baseURL}/EduCraftA/${id}`, `a-${id}`)}
-                        disabled={slot.status === "vacant"}>
-                        {copied === `a-${id}` ? "✓" : "Copy"}
-                      </button>
-                    </td>
+                    <td style={s.td}><button style={{ ...s.copyBtn, ...(copied === `a-${id}` ? s.copyBtnDone : {}) }} onClick={() => copyLink(`${baseURL}/EduCraftA/${id}`, `a-${id}`)} disabled={slot.status === "vacant"}>{copied === `a-${id}` ? "✓" : "Copy"}</button></td>
                   </tr>
                 ))}
-                {filteredSlots.length === 0 && (
-                  <tr><td colSpan={7} style={s.emptyRow}>No slots match your search.</td></tr>
-                )}
+                {filteredSlots.length === 0 && <tr><td colSpan={7} style={s.emptyRow}>No slots match your search.</td></tr>}
               </tbody>
             </table>
           </div>
         </>)}
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════
             TAB: SCHOOLS
-        ══════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════ */}
         {tab === "schools" && (<>
           <div style={s.sectionLabel}>School Coverage</div>
           <div style={s.schoolGrid}>
@@ -534,15 +480,10 @@ export default function AdminDashboard() {
               return (
                 <div key={abbr} style={s.schoolCard}>
                   <div style={s.schoolCardHeader}>
-                    <div>
-                      <div style={s.schoolAbbr}>{abbr || "—"}</div>
-                      <div style={s.schoolName}>{SCHOOL_NAMES[abbr] || abbr}</div>
-                    </div>
+                    <div><div style={s.schoolAbbr}>{abbr || "—"}</div><div style={s.schoolName}>{SCHOOL_NAMES[abbr] || abbr}</div></div>
                     <div style={s.schoolTotal}>{tot}</div>
                   </div>
-                  <div style={s.progressBg}>
-                    <div style={{ ...s.progressFill, width: `${pct}%` }} />
-                  </div>
+                  <div style={s.progressBg}><div style={{ ...s.progressFill, width: `${pct}%` }} /></div>
                   <div style={s.schoolFooter}>
                     <span style={{ color: C.green, fontWeight: 700 }}>● {stats.active} Active</span>
                     <span style={{ color: C.yellowDark, fontWeight: 600 }}>○ {stats.vacant} Vacant</span>
@@ -554,57 +495,34 @@ export default function AdminDashboard() {
           </div>
         </>)}
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════
             TAB: CORE AMBASSADORS
-        ══════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════ */}
         {tab === "core" && (<>
           <div style={s.sectionLabel}>Core Ambassadors (ECCA) — Senior Partners</div>
           <div style={s.infoBox}>
             <span style={s.infoIcon}>⭐</span>
-            <div>
-              <p>Core Ambassadors earn their base % per job. They recruit Sub-Ambassadors who earn <strong>7%</strong> per job, while the Core earns <strong>3%</strong> extra per Sub job.</p>
-              <p style={{ marginTop: 6 }}>Share the <strong>Recruit Link</strong> with potential Sub-Ambassadors to join under a Core Ambassador.</p>
-            </div>
+            <div><p>Core Ambassadors earn base % + <strong>3%</strong> per Sub job. Share the Recruit Link with potential Sub-Ambassadors.</p></div>
           </div>
           <div style={s.tableWrapper}>
             <table style={s.table}>
-              <thead>
-                <tr style={s.thead}>
-                  {["No.", "ID", "Name", "School", "Base %", "Subs", "Total %", "Recruit Link", ""].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
+              <thead><tr style={s.thead}>{["No.","ID","Name","School","Base %","Subs","Total %","Recruit Link",""].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {liveData.coreAmbassadors.map((a, i) => {
-                  const subCount     = liveData.subAmbassadors.filter(sb => sb.coreId === a.id).length;
-                  const totalEarning = a.percentage + (subCount * 3);
-                  const ck           = `ecca-${a.id}`;
+                  const subs  = liveData.subAmbassadors.filter(sb => sb.coreId === a.id).length;
+                  const total = a.percentage + subs * 3;
+                  const ck    = `ecca-${a.id}`;
                   return (
                     <tr key={a.id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk }}>
-                      <td style={s.td}><span style={s.rowNum}>{i + 1}.</span></td>
+                      <td style={s.td}><span style={s.rowNum}>{i+1}.</span></td>
                       <td style={s.td}><span style={s.slotId}>{a.id}</span></td>
                       <td style={s.td}><strong style={{ color: C.greenDark }}>{a.name}</strong></td>
                       <td style={s.td}><span style={s.schoolTag}>{a.school}</span></td>
                       <td style={s.td}><span style={{ ...s.badge, background: C.green, color: C.white }}>{a.percentage}%</span></td>
-                      <td style={s.td}>
-                        <span style={{ color: subCount > 0 ? C.green : "#bbb", fontWeight: subCount > 0 ? 700 : 400 }}>
-                          {subCount > 0 ? `${subCount}` : "—"}
-                        </span>
-                      </td>
-                      <td style={s.td}>
-                        <span style={{ ...s.badge, background: C.yellow, color: C.greenDark, fontWeight: 800 }}>
-                          {totalEarning}%
-                        </span>
-                      </td>
+                      <td style={s.td}><span style={{ color: subs > 0 ? C.green : "#bbb", fontWeight: subs > 0 ? 700 : 400 }}>{subs > 0 ? subs : "—"}</span></td>
+                      <td style={s.td}><span style={{ ...s.badge, background: C.yellow, color: C.greenDark, fontWeight: 800 }}>{total}%</span></td>
                       <td style={s.td}><span style={s.linkText}>/ECCA/{a.id}</span></td>
-                      <td style={s.td}>
-                        <button
-                          style={{ ...s.copyBtn, ...(copied === ck ? s.copyBtnDone : {}) }}
-                          onClick={() => copyLink(`${baseURL}/ECCA/${a.id}`, ck)}>
-                          {copied === ck ? "✓" : "Copy"}
-                        </button>
-                      </td>
+                      <td style={s.td}><button style={{ ...s.copyBtn, ...(copied === ck ? s.copyBtnDone : {}) }} onClick={() => copyLink(`${baseURL}/ECCA/${a.id}`, ck)}>{copied === ck ? "✓" : "Copy"}</button></td>
                     </tr>
                   );
                 })}
@@ -613,220 +531,310 @@ export default function AdminDashboard() {
           </div>
         </>)}
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════
             TAB: SUB AMBASSADORS
-        ══════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════ */}
         {tab === "sub" && (<>
           <div style={s.sectionLabel}>Sub-Ambassadors (ECSA)</div>
           <div style={s.infoBox}>
             <span style={s.infoIcon}>🔗</span>
-            <div>
-              <p>Sub-Ambassadors earn <strong>7%</strong> per job. Their Core earns <strong>3%</strong> per Sub job.</p>
-              <p style={{ marginTop: 6 }}>Share the <strong>Client Link</strong> with potential clients.</p>
-            </div>
+            <div><p>Sub-Ambassadors earn <strong>7%</strong> per job. Their Core earns <strong>3%</strong> per Sub job. Share the Client Link with potential clients.</p></div>
           </div>
           <div style={s.tableWrapper}>
             <table style={s.table}>
-              <thead>
-                <tr style={s.thead}>
-                  {["No.", "ID", "Name", "School", "%", "Under (Core)", "Client Link", ""].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
+              <thead><tr style={s.thead}>{["No.","ID","Name","School","%","Under (Core)","Client Link",""].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {liveData.subAmbassadors.map((a, i) => {
                   const core = liveData.coreAmbassadors.find(c => c.id === a.coreId);
                   const ck   = `ecsa-${a.id}`;
                   return (
                     <tr key={a.id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk }}>
-                      <td style={s.td}><span style={s.rowNum}>{i + 1}.</span></td>
+                      <td style={s.td}><span style={s.rowNum}>{i+1}.</span></td>
                       <td style={s.td}><span style={s.slotId}>{a.id}</span></td>
                       <td style={s.td}><strong style={{ color: C.greenDark }}>{a.name}</strong></td>
                       <td style={s.td}><span style={s.schoolTag}>{a.school}</span></td>
                       <td style={s.td}><span style={{ ...s.badge, background: C.yellowDark, color: C.greenDark }}>{a.percentage}%</span></td>
-                      <td style={s.td}>
-                        {core
-                          ? <span style={{ color: C.green, fontWeight: 600 }}>⭐ {core.name}</span>
-                          : <span style={{ color: "#bbb" }}>—</span>}
-                      </td>
+                      <td style={s.td}>{core ? <span style={{ color: C.green, fontWeight: 600 }}>⭐ {core.name}</span> : <span style={{ color: "#bbb" }}>—</span>}</td>
                       <td style={s.td}><span style={s.linkText}>/ECSA/{a.id}</span></td>
-                      <td style={s.td}>
-                        <button
-                          style={{ ...s.copyBtn, ...(copied === ck ? s.copyBtnDone : {}) }}
-                          onClick={() => copyLink(`${baseURL}/ECSA/${a.id}`, ck)}>
-                          {copied === ck ? "✓" : "Copy"}
-                        </button>
-                      </td>
+                      <td style={s.td}><button style={{ ...s.copyBtn, ...(copied === ck ? s.copyBtnDone : {}) }} onClick={() => copyLink(`${baseURL}/ECSA/${a.id}`, ck)}>{copied === ck ? "✓" : "Copy"}</button></td>
                     </tr>
                   );
                 })}
-                {liveData.subAmbassadors.length === 0 && (
-                  <tr><td colSpan={8} style={s.emptyRow}>No sub-ambassadors yet.</td></tr>
-                )}
+                {liveData.subAmbassadors.length === 0 && <tr><td colSpan={8} style={s.emptyRow}>No sub-ambassadors yet.</td></tr>}
               </tbody>
             </table>
           </div>
         </>)}
 
-        {/* ══════════════════════════════════════════════════════
-            TAB: MANAGE
-        ══════════════════════════════════════════════════════ */}
-        {tab === "manage" && (<>
-          <div style={s.sectionLabel}>⚙️ Manage Ambassador Slots</div>
+        {/* ════════════════════════════════════════════════
+            TAB: TRACKING
+        ════════════════════════════════════════════════ */}
+        {tab === "tracking" && (<>
+          <div style={s.sectionLabel}>📊 Referral Tracking — Live Leaderboard</div>
 
-          {/* ── How it works banner ── */}
-          <div style={s.infoBox}>
-            <span style={s.infoIcon}>💡</span>
-            <div style={{ fontSize: "0.85rem", lineHeight: 1.7 }}>
-              <strong>How this works:</strong> Edit or add ambassadors below — changes apply instantly across <em>all tabs and the dashboard</em>. To make links live for everyone, click <strong>🚀 Deploy to GitHub</strong>. Vercel will rebuild in ~30 seconds.
+          {/* Stat cards */}
+          <div style={s.statsRow}>
+            <StatCard label="Total Clicks"    value={totalClicks}     color={C.white}     bg={C.green} />
+            <StatCard label="Orders Logged"   value={totalOrders}     color={C.greenDark} bg={C.yellow} />
+            <StatCard label="Ambassadors Reg." value={registeredCount} color={C.white}     bg={C.greenDark} />
+          </div>
+
+          {/* Registration link banner */}
+          <div style={{ ...s.infoBox, marginBottom: 16 }}>
+            <span style={s.infoIcon}>🔗</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 700, marginBottom: 4 }}>Ambassador Registration Link</p>
+              <p style={{ fontSize: "0.82rem" }}>Share this with ambassadors so they can register their email and receive commission notifications.</p>
+              <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" as const }}>
+                <span style={{ ...s.linkText, fontSize: "0.85rem" }}>{baseURL}/register</span>
+                <button style={{ ...s.copyBtn, ...(copied === "reg-link" ? s.copyBtnDone : {}) }}
+                  onClick={() => copyLink(`${baseURL}/register`, "reg-link")}>
+                  {copied === "reg-link" ? "✓ Copied" : "Copy Link"}
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* ── Action bar ── */}
-          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" as const, alignItems: "center" }}>
-            <input style={{ ...s.searchInput, maxWidth: 260 }}
-              placeholder="Search slots…" value={manageSearch} onChange={e => setManageSearch(e.target.value)} />
-            <button style={{ ...s.actionBtn, background: C.green, color: C.white }}
-              onClick={openAddForm}>
-              ➕ Add New Ambassador
-            </button>
-            <button
-              style={{
-                ...s.actionBtn,
-                background: deployState === "success" ? C.green : deployState === "error" ? C.red : C.greenDark,
-                color: C.yellow,
-                marginLeft: "auto",
-                opacity: deployState === "deploying" ? 0.7 : 1,
-              }}
-              onClick={handleDeploy}
-              disabled={deployState === "deploying"}>
-              {deployState === "deploying" ? "⏳ Deploying…" : deployState === "success" ? "✅ Deployed!" : deployState === "error" ? "❌ Retry Deploy" : "🚀 Deploy to GitHub"}
-            </button>
-          </div>
-
-          {/* ── Deploy status message ── */}
-          {deployMsg && (
-            <div style={{
-              ...s.statusBanner,
-              borderColor: deployState === "error" ? C.red : C.green,
-              background:  deployState === "error" ? C.redLight : C.white,
-              color:       deployState === "error" ? C.red : C.greenDark,
-            }}>
-              {deployMsg}
+          {/* Log Order Modal */}
+          {logSlot && (
+            <div style={s.editCard}>
+              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 14, fontSize: "1rem" }}>
+                📝 Log Order — <span style={{ color: C.green }}>{logName}</span>
+                <span style={{ marginLeft: 8, fontSize: "0.75rem", color: "#aaa", fontWeight: 400 }}>({logSlot})</span>
+              </div>
+              <label style={s.formLabel}>Job Description (optional)</label>
+              <input style={{ ...s.formInput, marginBottom: 14 }}
+                placeholder="e.g. Final year project, Seminar paper…"
+                value={logDesc}
+                onChange={e => setLogDesc(e.target.value)}
+              />
+              {logMsg && (
+                <div style={{ ...s.statusBanner, marginBottom: 14, borderColor: logStatus === "error" ? C.red : C.green, background: logStatus === "error" ? C.redLight : C.white, color: logStatus === "error" ? C.red : C.greenDark }}>
+                  {logMsg}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={{ ...s.actionBtn, background: logStatus === "success" ? C.green : C.greenDark, color: C.yellow, opacity: logStatus === "loading" ? 0.7 : 1 }}
+                  onClick={handleLogOrder} disabled={logStatus === "loading" || logStatus === "success"}>
+                  {logStatus === "loading" ? "Logging…" : logStatus === "success" ? "✓ Logged!" : "Confirm Order"}
+                </button>
+                <button style={{ ...s.actionBtn, background: C.milk, color: C.greenDark, border: `1.5px solid ${C.milkDark}` }}
+                  onClick={() => setLogSlot(null)}>Cancel</button>
+              </div>
             </div>
           )}
 
-          {/* ── GitHub Settings (collapsible) ── */}
-          <div style={s.settingsSection}>
-            <button style={s.settingsToggle} onClick={() => setShowGhSettings(g => !g)}>
-              🔑 GitHub Deploy Settings {showGhSettings ? "▲" : "▼"}
+          {/* Tracking Settings */}
+          <div style={{ ...s.settingsSection, marginBottom: 16 }}>
+            <button style={s.settingsToggle} onClick={() => setShowTrackingSettings(g => !g)}>
+              🔐 Tracking Settings {showTrackingSettings ? "▲" : "▼"}
             </button>
-            {showGhSettings && (
+            {showTrackingSettings && (
               <div style={s.settingsBody}>
-                <p style={{ fontSize: "0.82rem", color: "#888", marginBottom: 14, lineHeight: 1.6 }}>
-                  Enter your GitHub credentials once. These are saved locally in your browser only — never sent anywhere except GitHub.
-                  <br />Need a token? Go to <strong>GitHub → Settings → Developer settings → Personal access tokens → Generate new token (classic)</strong> with <code>repo</code> scope.
+                <p style={{ fontSize: "0.82rem", color: "#888", marginBottom: 14, lineHeight: 1.7 }}>
+                  Set an <strong>Admin Secret</strong> to protect your stats endpoint. Must match the <code>ADMIN_SECRET</code> environment variable in Vercel.
                 </p>
-                {[
-                  { label: "GitHub Username / Org", key: "owner", placeholder: "e.g. PrinceAmadin" },
-                  { label: "Repository Name",       key: "repo",  placeholder: "e.g. EduCraft-Ambassador-" },
-                  { label: "Personal Access Token", key: "token", placeholder: "ghp_xxxxxxxxxxxx", type: "password" },
-                ].map(f => (
-                  <div key={f.key} style={{ marginBottom: 12 }}>
-                    <label style={s.formLabel}>{f.label}</label>
-                    <input
-                      style={s.formInput}
-                      type={f.type || "text"}
-                      placeholder={f.placeholder}
-                      value={gh[f.key as keyof typeof gh]}
-                      onChange={e => setGh({ ...gh, [f.key]: e.target.value })}
-                    />
-                  </div>
-                ))}
-                <button style={{ ...s.actionBtn, background: C.green, color: C.white, marginTop: 4 }}
-                  onClick={() => { saveGH(gh); setShowGhSettings(false); setDeployMsg("✅ Settings saved!"); }}>
-                  Save Settings
+                <div style={{ marginBottom: 12 }}>
+                  <label style={s.formLabel}>Admin Secret</label>
+                  <input style={s.formInput} type="password" placeholder="Your ADMIN_SECRET value"
+                    value={adminSecret} onChange={e => setAdminSecret(e.target.value)} />
+                </div>
+                <div style={{ background: C.milk, borderRadius: 8, padding: "12px 14px", fontSize: "0.8rem", color: C.greenDark, lineHeight: 1.8, marginBottom: 12 }}>
+                  <strong>Required Vercel env vars:</strong><br />
+                  <code>UPSTASH_REDIS_REST_URL</code> — from <a href="https://upstash.com" target="_blank" style={{ color: C.green }}>upstash.com</a> → your Redis DB<br />
+                  <code>UPSTASH_REDIS_REST_TOKEN</code> — same place<br />
+                  <code>RESEND_API_KEY</code> — from <a href="https://resend.com" target="_blank" style={{ color: C.green }}>resend.com</a> → API Keys<br />
+                  <code>RESEND_FROM</code> — e.g. <em>EduCraft &lt;notifications@yourdomain.com&gt;</em><br />
+                  <code>ADMIN_SECRET</code> — any password string you choose<br />
+                </div>
+                <button style={{ ...s.actionBtn, background: C.green, color: C.white }}
+                  onClick={() => { setShowTrackingSettings(false); fetchStats(); }}>
+                  Save & Refresh Stats
                 </button>
               </div>
             )}
           </div>
 
-          {/* ── Add New Ambassador Form ── */}
+          {/* Error/loading states */}
+          {trackingLoading && (
+            <div style={{ ...s.statusBanner, borderColor: C.yellowDark, color: C.greenDark }}>
+              ⏳ Loading tracking data…
+            </div>
+          )}
+          {trackingError && !trackingLoading && (
+            <div style={{ ...s.statusBanner, borderColor: C.red, background: C.redLight, color: C.red, marginBottom: 16 }}>
+              ❌ {trackingError}
+              <button style={{ marginLeft: 12, background: "none", border: `1px solid ${C.red}`, color: C.red, borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: "0.8rem" }}
+                onClick={fetchStats}>Retry</button>
+            </div>
+          )}
+
+          {/* Controls */}
+          <div style={{ ...s.controls, marginBottom: 14 }}>
+            <input style={s.searchInput} placeholder="Search ambassadors…" value={trackSearch} onChange={e => setTrackSearch(e.target.value)} />
+            <button style={{ ...s.actionBtn, background: C.greenDark, color: C.yellow }} onClick={fetchStats} disabled={trackingLoading}>
+              ↻ Refresh
+            </button>
+          </div>
+
+          {/* Tracking table */}
+          <div style={s.tableWrapper}>
+            <table style={s.table}>
+              <thead>
+                <tr style={s.thead}>
+                  {["#","Ambassador","Type","Clicks","Orders","Conv. %","Email","Log Order"].map(h => (
+                    <th key={h} style={s.th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {trackingRows.map((row, i) => {
+                  const convPct = row.stat.clicks > 0 ? Math.round((row.stat.orders / row.stat.clicks) * 100) : 0;
+                  const typeColor = row.type === "core" ? C.yellow : row.type === "sub" ? "#e0f2fe" : C.milk;
+                  const typeTextColor = row.type === "core" ? C.greenDark : row.type === "sub" ? "#0369a1" : C.green;
+                  const typeLabel = row.type === "core" ? "⭐ Core" : row.type === "sub" ? "🔗 Sub" : "General";
+                  return (
+                    <tr key={row.id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk }}>
+                      <td style={s.td}><span style={s.rowNum}>{i + 1}.</span></td>
+                      <td style={s.td}>
+                        <strong style={{ color: C.greenDark, display: "block" }}>{row.name}</strong>
+                        <span style={{ ...s.slotId, fontSize: "0.76rem" }}>{row.id}</span>
+                      </td>
+                      <td style={s.td}>
+                        <span style={{ ...s.badge, background: typeColor, color: typeTextColor }}>{typeLabel}</span>
+                      </td>
+                      <td style={s.td}>
+                        <span style={{ fontWeight: 800, color: row.stat.clicks > 0 ? C.green : "#ccc", fontSize: "1rem" }}>
+                          {row.stat.clicks}
+                        </span>
+                      </td>
+                      <td style={s.td}>
+                        <span style={{ fontWeight: 800, color: row.stat.orders > 0 ? C.greenDark : "#ccc", fontSize: "1rem" }}>
+                          {row.stat.orders}
+                        </span>
+                      </td>
+                      <td style={s.td}>
+                        <span style={{ ...s.badge, background: convPct >= 10 ? C.green : convPct > 0 ? C.yellowDark : C.milk, color: convPct >= 10 ? C.white : C.greenDark }}>
+                          {convPct}%
+                        </span>
+                      </td>
+                      <td style={s.td}>
+                        {row.stat.email
+                          ? <span style={{ color: C.green, fontWeight: 700, fontSize: "0.8rem" }}>✓ Registered</span>
+                          : <span style={{ color: "#ccc", fontSize: "0.8rem" }}>—</span>}
+                      </td>
+                      <td style={s.td}>
+                        <button style={{ ...s.copyBtn, background: C.greenDark, color: C.yellow, border: "none" }}
+                          onClick={() => openLogOrder(row.id, row.name)}>
+                          📝 Log
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {trackingRows.length === 0 && !trackingLoading && (
+                  <tr><td colSpan={8} style={s.emptyRow}>No ambassadors found. {trackSearch ? "Try a different search." : "Stats will appear once links are clicked."}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p style={s.footerNote}>{trackingRows.length} ambassadors shown · Sorted by engagement · Click "↻ Refresh" for latest data</p>
+        </>)}
+
+        {/* ════════════════════════════════════════════════
+            TAB: MANAGE
+        ════════════════════════════════════════════════ */}
+        {tab === "manage" && (<>
+          <div style={s.sectionLabel}>⚙️ Manage Ambassador Slots</div>
+          <div style={s.infoBox}>
+            <span style={s.infoIcon}>💡</span>
+            <div style={{ fontSize: "0.85rem", lineHeight: 1.7 }}>
+              <strong>How this works:</strong> Edit or add ambassadors — changes apply instantly across all tabs. Click <strong>🚀 Deploy to GitHub</strong> to push live. Vercel rebuilds in ~30s.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" as const, alignItems: "center" }}>
+            <input style={{ ...s.searchInput, maxWidth: 260 }} placeholder="Search slots…" value={manageSearch} onChange={e => setManageSearch(e.target.value)} />
+            <button style={{ ...s.actionBtn, background: C.green, color: C.white }} onClick={openAddForm}>➕ Add Ambassador</button>
+            <button style={{ ...s.actionBtn, background: deployState === "success" ? C.green : deployState === "error" ? C.red : C.greenDark, color: C.yellow, marginLeft: "auto", opacity: deployState === "deploying" ? 0.7 : 1 }}
+              onClick={handleDeploy} disabled={deployState === "deploying"}>
+              {deployState === "deploying" ? "⏳ Deploying…" : deployState === "success" ? "✅ Deployed!" : deployState === "error" ? "❌ Retry Deploy" : "🚀 Deploy to GitHub"}
+            </button>
+          </div>
+          {deployMsg && <div style={{ ...s.statusBanner, borderColor: deployState === "error" ? C.red : C.green, background: deployState === "error" ? C.redLight : C.white, color: deployState === "error" ? C.red : C.greenDark, marginBottom: 16 }}>{deployMsg}</div>}
+
+          {/* GitHub Settings */}
+          <div style={{ ...s.settingsSection, marginBottom: 20 }}>
+            <button style={s.settingsToggle} onClick={() => setShowGhSettings(g => !g)}>🔑 GitHub Deploy Settings {showGhSettings ? "▲" : "▼"}</button>
+            {showGhSettings && (
+              <div style={s.settingsBody}>
+                <p style={{ fontSize: "0.82rem", color: "#888", marginBottom: 14, lineHeight: 1.6 }}>
+                  Generate a GitHub <strong>Personal Access Token</strong> (classic, <code>repo</code> scope) at <em>Settings → Developer settings → Personal access tokens</em>.
+                </p>
+                {[{ label: "GitHub Username / Org", key: "owner", placeholder: "e.g. PrinceAmadin" },
+                  { label: "Repository Name",       key: "repo",  placeholder: "e.g. EduCraft-Ambassador" },
+                  { label: "Personal Access Token", key: "token", placeholder: "ghp_xxxx…", type: "password" }].map(f => (
+                  <div key={f.key} style={{ marginBottom: 12 }}>
+                    <label style={s.formLabel}>{f.label}</label>
+                    <input style={s.formInput} type={f.type || "text"} placeholder={f.placeholder}
+                      value={gh[f.key as keyof typeof gh]}
+                      onChange={e => setGh({ ...gh, [f.key]: e.target.value })} />
+                  </div>
+                ))}
+                <button style={{ ...s.actionBtn, background: C.green, color: C.white, marginTop: 4 }}
+                  onClick={() => { saveGH(gh); setShowGhSettings(false); setDeployMsg("✅ Settings saved!"); }}>Save Settings</button>
+              </div>
+            )}
+          </div>
+
+          {/* Add form */}
           {showAddForm && (
             <div style={s.editCard}>
-              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 16, fontSize: "1rem" }}>
-                ➕ Add New Ambassador
-              </div>
+              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 16, fontSize: "1rem" }}>➕ Add New Ambassador</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                <div>
-                  <label style={s.formLabel}>Slot ID (number)</label>
-                  <input style={s.formInput} value={newId} onChange={e => setNewId(e.target.value)} placeholder="e.g. 067" />
-                </div>
-                <div>
-                  <label style={s.formLabel}>Full Name</label>
-                  <input style={s.formInput} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Ambassador's name" />
-                </div>
-                <div>
-                  <label style={s.formLabel}>School</label>
-                  <input style={s.formInput} value={newSchool} onChange={e => setNewSchool(e.target.value)} placeholder="EUI, UNIBEN…" />
-                </div>
+                {[{ label: "Slot ID", val: newId, set: setNewId, placeholder: "e.g. 067" },
+                  { label: "Full Name", val: newName, set: setNewName, placeholder: "Ambassador's name" },
+                  { label: "School",    val: newSchool, set: setNewSchool, placeholder: "EUI, UNIBEN…" }].map(f => (
+                  <div key={f.label}>
+                    <label style={s.formLabel}>{f.label}</label>
+                    <input style={s.formInput} value={f.val} onChange={e => f.set(e.target.value)} placeholder={f.placeholder} />
+                  </div>
+                ))}
                 <div>
                   <label style={s.formLabel}>Status</label>
                   <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-                    {(["active", "vacant"] as const).map(st => (
-                      <button key={st}
-                        style={{
-                          ...s.filterBtn,
-                          ...(newStatus === st ? { background: st === "active" ? C.green : C.yellowDark, color: st === "active" ? C.white : C.greenDark, border: "none" } : {}),
-                        }}
-                        onClick={() => setNewStatus(st)}>
-                        {st === "active" ? "● Active" : "○ Vacant"}
-                      </button>
+                    {(["active","vacant"] as const).map(st => (
+                      <button key={st} style={{ ...s.filterBtn, ...(newStatus === st ? { background: st === "active" ? C.green : C.yellowDark, color: st === "active" ? C.white : C.greenDark, border: "none" } : {}) }}
+                        onClick={() => setNewStatus(st)}>{st === "active" ? "● Active" : "○ Vacant"}</button>
                     ))}
                   </div>
                 </div>
               </div>
               {addError && <p style={{ color: C.red, fontSize: "0.82rem", marginTop: 10 }}>⚠️ {addError}</p>}
               <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-                <button style={{ ...s.actionBtn, background: C.green, color: C.white }} onClick={saveNewAmbassador}>
-                  ✓ Add Ambassador
-                </button>
-                <button style={{ ...s.actionBtn, background: C.milk, color: C.greenDark, border: `1.5px solid ${C.milkDark}` }}
-                  onClick={() => { setShowAddForm(false); setAddError(""); }}>
-                  Cancel
-                </button>
+                <button style={{ ...s.actionBtn, background: C.green, color: C.white }} onClick={saveNewAmbassador}>✓ Add Ambassador</button>
+                <button style={{ ...s.actionBtn, background: C.milk, color: C.greenDark, border: `1.5px solid ${C.milkDark}` }} onClick={() => { setShowAddForm(false); setAddError(""); }}>Cancel</button>
               </div>
             </div>
           )}
 
-          {/* ── Edit existing form ── */}
+          {/* Edit form */}
           {editingId && (
             <div style={s.editCard}>
-              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 16 }}>
-                ✏️ Editing Slot <span style={{ color: C.green }}>EduCraftA-{editingId}</span>
-              </div>
+              <div style={{ fontWeight: 800, color: C.greenDark, marginBottom: 16 }}>✏️ Editing <span style={{ color: C.green }}>EduCraftA-{editingId}</span></div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                <div>
-                  <label style={s.formLabel}>Name</label>
-                  <input style={s.formInput} value={editName} onChange={e => setEditName(e.target.value)} placeholder="Ambassador's name" />
-                </div>
-                <div>
-                  <label style={s.formLabel}>School</label>
-                  <input style={s.formInput} value={editSchool} onChange={e => setEditSchool(e.target.value)} placeholder="EUI, UNIBEN…" />
-                </div>
+                {[{ label: "Name", val: editName, set: setEditName, placeholder: "Ambassador's name" },
+                  { label: "School", val: editSchool, set: setEditSchool, placeholder: "EUI, UNIBEN…" }].map(f => (
+                  <div key={f.label}>
+                    <label style={s.formLabel}>{f.label}</label>
+                    <input style={s.formInput} value={f.val} onChange={e => f.set(e.target.value)} placeholder={f.placeholder} />
+                  </div>
+                ))}
                 <div>
                   <label style={s.formLabel}>Status</label>
                   <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-                    {(["active", "vacant"] as const).map(st => (
-                      <button key={st}
-                        style={{
-                          ...s.filterBtn,
-                          ...(editStatus === st ? { background: st === "active" ? C.green : C.yellowDark, color: st === "active" ? C.white : C.greenDark, border: "none" } : {}),
-                        }}
-                        onClick={() => setEditStatus(st)}>
-                        {st === "active" ? "● Active" : "○ Vacant"}
-                      </button>
+                    {(["active","vacant"] as const).map(st => (
+                      <button key={st} style={{ ...s.filterBtn, ...(editStatus === st ? { background: st === "active" ? C.green : C.yellowDark, color: st === "active" ? C.white : C.greenDark, border: "none" } : {}) }}
+                        onClick={() => setEditStatus(st)}>{st === "active" ? "● Active" : "○ Vacant"}</button>
                     ))}
                   </div>
                 </div>
@@ -838,49 +846,23 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* ── Slots table ── */}
           <div style={s.tableWrapper}>
             <table style={s.table}>
-              <thead>
-                <tr style={s.thead}>
-                  {["Slot ID", "Name", "School", "Status", "Edit"].map(h => <th key={h} style={s.th}>{h}</th>)}
-                </tr>
-              </thead>
+              <thead><tr style={s.thead}>{["Slot ID","Name","School","Status","Edit"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {manageRows.map(([id, slot], i) => (
-                  <tr key={id} style={{
-                    ...s.tr,
-                    background: i % 2 === 0 ? C.white : C.milk,
-                    outline: editingId === id ? `2px solid ${C.green}` : "none",
-                  }}>
+                  <tr key={id} style={{ ...s.tr, background: i % 2 === 0 ? C.white : C.milk, outline: editingId === id ? `2px solid ${C.green}` : "none" }}>
                     <td style={s.td}><span style={s.slotId}>EduCraftA-{id}</span></td>
-                    <td style={s.td}>
-                      {slot.name
-                        ? <strong style={{ color: C.greenDark }}>{slot.name}</strong>
-                        : <em style={{ color: "#bbb" }}>— Vacant —</em>}
-                    </td>
+                    <td style={s.td}>{slot.name ? <strong style={{ color: C.greenDark }}>{slot.name}</strong> : <em style={{ color: "#bbb" }}>— Vacant —</em>}</td>
                     <td style={s.td}><span style={s.schoolTag}>{slot.school || "—"}</span></td>
-                    <td style={s.td}>
-                      <span style={{ ...s.badge, background: slot.status === "active" ? C.green : C.yellowDark, color: slot.status === "active" ? C.white : C.greenDark }}>
-                        {slot.status === "active" ? "● Active" : "○ Vacant"}
-                      </span>
-                    </td>
-                    <td style={s.td}>
-                      <button
-                        style={{ ...s.copyBtn, ...(editingId === id ? { background: C.yellow, color: C.greenDark } : {}) }}
-                        onClick={() => editingId === id ? setEditingId(null) : startEdit(id)}>
-                        {editingId === id ? "Editing…" : "✏️ Edit"}
-                      </button>
-                    </td>
+                    <td style={s.td}><span style={{ ...s.badge, background: slot.status === "active" ? C.green : C.yellowDark, color: slot.status === "active" ? C.white : C.greenDark }}>{slot.status === "active" ? "● Active" : "○ Vacant"}</span></td>
+                    <td style={s.td}><button style={{ ...s.copyBtn, ...(editingId === id ? { background: C.yellow, color: C.greenDark } : {}) }} onClick={() => editingId === id ? setEditingId(null) : startEdit(id)}>{editingId === id ? "Editing…" : "✏️ Edit"}</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-
-          <p style={{ ...s.footerNote, marginTop: 12 }}>
-            {Object.keys(liveData.slots).length} total slots · Edits saved locally · Click <strong>🚀 Deploy</strong> to push live
-          </p>
+          <p style={{ ...s.footerNote, marginTop: 12 }}>{Object.keys(liveData.slots).length} total slots · Edits saved locally · Deploy to push live</p>
         </>)}
 
         <p style={s.footerNote}>EduCraft Ambassador Panel · Powered by Vercel</p>
@@ -892,7 +874,7 @@ export default function AdminDashboard() {
 // ── StatCard ──────────────────────────────────────────────────────────────────
 function StatCard({ label, value, color, bg }: { label: string; value: number | string; color: string; bg: string }) {
   return (
-    <div style={{ borderRadius: 14, padding: "20px 22px", background: bg, border: `1.5px solid ${bg === "#FFF9ED" ? "#E0B846" : bg}`, boxShadow: "0 2px 8px rgba(0,0,0,0.07)" }}>
+    <div style={{ borderRadius: 14, padding: "20px 22px", background: bg, border: `1.5px solid ${bg === C.milk ? C.yellowDark : bg}`, boxShadow: "0 2px 8px rgba(0,0,0,0.07)" }}>
       <div style={{ fontSize: "2rem", fontWeight: 900, color, lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: "0.72rem", color, opacity: 0.85, marginTop: 6, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>{label}</div>
     </div>
@@ -901,61 +883,60 @@ function StatCard({ label, value, color, bg }: { label: string; value: number | 
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s: Record<string, React.CSSProperties> = {
-  page:          { minHeight: "100vh", background: C.milk, color: C.greenDark, fontFamily: "'Segoe UI', system-ui, sans-serif" },
-  header:        { background: C.greenDark, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
-  logo:          { display: "flex", alignItems: "center", gap: 12 },
-  logoImg:       { width: 44, height: 44, objectFit: "contain" },
-  logoTitle:     { fontSize: "1.1rem", fontWeight: 800, color: C.yellow },
-  logoSub:       { fontSize: "0.68rem", color: C.white, opacity: 0.75 },
-  desktopNav:    { display: "flex", gap: 6, flexWrap: "wrap" },
-  navBtn:        { background: "transparent", border: `1.5px solid rgba(255,255,255,0.2)`, color: C.white, borderRadius: 8, padding: "8px 14px", fontSize: "0.82rem", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" },
-  navBtnActive:  { background: C.yellow, border: `1.5px solid ${C.yellow}`, color: C.greenDark },
-  hamburger:     { display: "flex", background: "transparent", border: `1.5px solid rgba(255,255,255,0.3)`, color: C.white, borderRadius: 8, padding: "8px 12px", fontSize: "1.1rem", cursor: "pointer" },
-  mobileMenu:    { background: C.greenDark, borderBottom: `3px solid ${C.yellow}`, display: "flex", flexDirection: "column", padding: "8px 16px 16px" },
-  mobileMenuItem: { background: "transparent", border: "none", borderBottom: `1px solid rgba(255,255,255,0.1)`, color: C.white, padding: "14px 8px", fontSize: "0.95rem", cursor: "pointer", textAlign: "left", fontWeight: 600 },
+  page:           { minHeight: "100vh", background: C.milk, color: C.greenDark, fontFamily: "'Segoe UI', system-ui, sans-serif" },
+  header:         { background: C.greenDark, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
+  logo:           { display: "flex", alignItems: "center", gap: 12 },
+  logoImg:        { width: 44, height: 44, objectFit: "contain" },
+  logoTitle:      { fontSize: "1.1rem", fontWeight: 800, color: C.yellow },
+  logoSub:        { fontSize: "0.68rem", color: C.white, opacity: 0.75 },
+  desktopNav:     { display: "flex", gap: 4, flexWrap: "wrap" },
+  navBtn:         { background: "transparent", border: "1.5px solid rgba(255,255,255,.2)", color: C.white, borderRadius: 8, padding: "7px 11px", fontSize: "0.79rem", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" },
+  navBtnActive:   { background: C.yellow, border: `1.5px solid ${C.yellow}`, color: C.greenDark },
+  hamburger:      { display: "flex", background: "transparent", border: "1.5px solid rgba(255,255,255,.3)", color: C.white, borderRadius: 8, padding: "8px 12px", fontSize: "1.1rem", cursor: "pointer" },
+  mobileMenu:     { background: C.greenDark, borderBottom: `3px solid ${C.yellow}`, display: "flex", flexDirection: "column", padding: "8px 16px 16px" },
+  mobileMenuItem: { background: "transparent", border: "none", borderBottom: "1px solid rgba(255,255,255,.1)", color: C.white, padding: "14px 8px", fontSize: "0.95rem", cursor: "pointer", textAlign: "left", fontWeight: 600 },
   mobileMenuItemActive: { color: C.yellow },
-  accentBar:     { height: 4, background: `linear-gradient(90deg, ${C.yellow}, ${C.yellowDark}, ${C.green})` },
-  main:          { padding: "24px 16px", maxWidth: 1200, margin: "0 auto" },
-  statsRow:      { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 28 },
-  sectionLabel:  { fontSize: "0.68rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 12 },
-  controls:      { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" },
-  searchInput:   { flex: 1, minWidth: 180, background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "10px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
-  filterGroup:   { display: "flex", gap: 6, flexWrap: "wrap" },
-  filterBtn:     { background: C.white, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 8, padding: "9px 16px", fontSize: "0.82rem", cursor: "pointer", fontWeight: 600 },
-  filterBtnActive: { background: C.green, border: `1.5px solid ${C.green}`, color: C.white },
-  tableWrapper:  { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, overflowX: "auto", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", WebkitOverflowScrolling: "touch" },
-  table:         { width: "100%", borderCollapse: "collapse", minWidth: 500 },
-  thead:         { background: C.greenDark },
-  th:            { padding: "12px 14px", textAlign: "left", fontSize: "0.68rem", fontWeight: 700, color: C.yellow, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" },
-  tr:            { borderBottom: `1px solid ${C.milkDark}` },
-  td:            { padding: "11px 14px", fontSize: "0.85rem", verticalAlign: "middle" },
-  rowNum:        { color: "#bbb", fontSize: "0.78rem" },
-  slotId:        { fontFamily: "monospace", color: C.green, fontWeight: 700, fontSize: "0.82rem" },
-  schoolTag:     { background: C.milk, border: `1px solid ${C.milkDark}`, color: C.green, padding: "2px 8px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600 },
-  badge:         { fontSize: "0.72rem", fontWeight: 700, padding: "4px 10px", borderRadius: 999, display: "inline-block", whiteSpace: "nowrap" },
-  linkText:      { fontFamily: "monospace", color: C.yellowDark, fontSize: "0.78rem", fontWeight: 600 },
-  copyBtn:       { background: C.milk, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 6, padding: "5px 12px", fontSize: "0.78rem", cursor: "pointer", fontWeight: 700 },
-  copyBtnDone:   { background: C.green, border: `1.5px solid ${C.green}`, color: C.white },
-  emptyRow:      { padding: 40, textAlign: "center", color: "#bbb" },
-  schoolGrid:    { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 },
-  schoolCard:    { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" },
+  accentBar:      { height: 4, background: `linear-gradient(90deg, ${C.yellow}, ${C.yellowDark}, ${C.green})` },
+  main:           { padding: "24px 16px", maxWidth: 1200, margin: "0 auto" },
+  statsRow:       { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 28 },
+  sectionLabel:   { fontSize: "0.68rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 12 },
+  controls:       { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" },
+  searchInput:    { flex: 1, minWidth: 180, background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "10px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
+  filterGroup:    { display: "flex", gap: 6, flexWrap: "wrap" },
+  filterBtn:      { background: C.white, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 8, padding: "9px 16px", fontSize: "0.82rem", cursor: "pointer", fontWeight: 600 },
+  filterBtnActive:{ background: C.green, border: `1.5px solid ${C.green}`, color: C.white },
+  tableWrapper:   { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, overflowX: "auto", boxShadow: "0 2px 12px rgba(0,0,0,.06)", WebkitOverflowScrolling: "touch" },
+  table:          { width: "100%", borderCollapse: "collapse", minWidth: 500 },
+  thead:          { background: C.greenDark },
+  th:             { padding: "12px 14px", textAlign: "left", fontSize: "0.68rem", fontWeight: 700, color: C.yellow, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" },
+  tr:             { borderBottom: `1px solid ${C.milkDark}` },
+  td:             { padding: "11px 14px", fontSize: "0.85rem", verticalAlign: "middle" },
+  rowNum:         { color: "#bbb", fontSize: "0.78rem" },
+  slotId:         { fontFamily: "monospace", color: C.green, fontWeight: 700, fontSize: "0.82rem" },
+  schoolTag:      { background: C.milk, border: `1px solid ${C.milkDark}`, color: C.green, padding: "2px 8px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600 },
+  badge:          { fontSize: "0.72rem", fontWeight: 700, padding: "4px 10px", borderRadius: 999, display: "inline-block", whiteSpace: "nowrap" },
+  linkText:       { fontFamily: "monospace", color: C.yellowDark, fontSize: "0.78rem", fontWeight: 600 },
+  copyBtn:        { background: C.milk, border: `1.5px solid ${C.green}`, color: C.green, borderRadius: 6, padding: "5px 12px", fontSize: "0.78rem", cursor: "pointer", fontWeight: 700 },
+  copyBtnDone:    { background: C.green, border: `1.5px solid ${C.green}`, color: C.white },
+  emptyRow:       { padding: 40, textAlign: "center", color: "#bbb" },
+  schoolGrid:     { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 },
+  schoolCard:     { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 14, padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,.05)" },
   schoolCardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
-  schoolAbbr:    { fontSize: "1.2rem", fontWeight: 900, color: C.greenDark },
-  schoolName:    { fontSize: "0.75rem", color: "#888", marginTop: 2 },
-  schoolTotal:   { fontSize: "2rem", fontWeight: 900, color: C.green },
-  progressBg:    { height: 8, background: C.milk, borderRadius: 999, overflow: "hidden", marginBottom: 10 },
-  progressFill:  { height: "100%", background: C.green, borderRadius: 999, transition: "width 0.4s ease" },
-  schoolFooter:  { display: "flex", justifyContent: "space-between", fontSize: "0.75rem", flexWrap: "wrap", gap: 4 },
-  infoBox:       { background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 10, padding: "14px 18px", marginBottom: 20, display: "flex", gap: 12, alignItems: "flex-start", fontSize: "0.88rem", color: C.greenDark, lineHeight: 1.6 },
-  infoIcon:      { fontSize: "1.3rem", flexShrink: 0 },
-  footerNote:    { marginTop: 28, color: "#aaa", fontSize: "0.76rem", textAlign: "center" },
-  // Manage tab
-  actionBtn:     { padding: "10px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.85rem" },
-  editCard:      { background: C.white, border: `2px solid ${C.green}`, borderRadius: 14, padding: "20px 24px", marginBottom: 20, boxShadow: "0 4px 16px rgba(18,130,124,0.12)" },
-  formLabel:     { display: "block", fontSize: "0.72rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 },
-  formInput:     { width: "100%", background: C.milk, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "9px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
-  settingsSection: { background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 12, marginBottom: 20, overflow: "hidden" },
+  schoolAbbr:     { fontSize: "1.2rem", fontWeight: 900, color: C.greenDark },
+  schoolName:     { fontSize: "0.75rem", color: "#888", marginTop: 2 },
+  schoolTotal:    { fontSize: "2rem", fontWeight: 900, color: C.green },
+  progressBg:     { height: 8, background: C.milk, borderRadius: 999, overflow: "hidden", marginBottom: 10 },
+  progressFill:   { height: "100%", background: C.green, borderRadius: 999, transition: "width 0.4s ease" },
+  schoolFooter:   { display: "flex", justifyContent: "space-between", fontSize: "0.75rem", flexWrap: "wrap", gap: 4 },
+  infoBox:        { background: C.white, border: `1.5px solid ${C.yellowDark}`, borderRadius: 10, padding: "14px 18px", marginBottom: 20, display: "flex", gap: 12, alignItems: "flex-start", fontSize: "0.88rem", color: C.greenDark, lineHeight: 1.6 },
+  infoIcon:       { fontSize: "1.3rem", flexShrink: 0 },
+  footerNote:     { marginTop: 28, color: "#aaa", fontSize: "0.76rem", textAlign: "center" },
+  actionBtn:      { padding: "10px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.85rem" },
+  editCard:       { background: C.white, border: `2px solid ${C.green}`, borderRadius: 14, padding: "20px 24px", marginBottom: 20, boxShadow: "0 4px 16px rgba(18,130,124,.12)" },
+  formLabel:      { display: "block", fontSize: "0.72rem", fontWeight: 700, color: C.green, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 },
+  formInput:      { width: "100%", background: C.milk, border: `1.5px solid ${C.yellowDark}`, borderRadius: 8, padding: "9px 14px", color: C.greenDark, fontSize: "0.88rem", outline: "none" },
+  settingsSection:{ background: C.white, border: `1.5px solid ${C.milkDark}`, borderRadius: 12, marginBottom: 20, overflow: "hidden" },
   settingsToggle: { width: "100%", background: "none", border: "none", borderBottom: `1.5px solid ${C.milkDark}`, padding: "14px 18px", textAlign: "left", cursor: "pointer", fontWeight: 700, color: C.greenDark, fontSize: "0.88rem" },
-  settingsBody:  { padding: "20px 18px" },
-  statusBanner:  { border: "1.5px solid", borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: "0.85rem", fontWeight: 600 },
+  settingsBody:   { padding: "20px 18px" },
+  statusBanner:   { border: "1.5px solid", borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: "0.85rem", fontWeight: 600 },
 };
