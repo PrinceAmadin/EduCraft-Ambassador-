@@ -1,13 +1,11 @@
-// api/redirect.ts
-// EduCraft Ambassador Redirect — Vercel Serverless Function
-// Tracks every click in Upstash Redis before redirecting.
+// api/redirect.ts — EduCraft Ambassador Redirect
+// Uses REDIS_URL (Redis Cloud) for click tracking.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createClient } from "redis";
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-const EDUCRAFT_WHATSAPP = "2347063421088"; // ✏️ EduCraft's official WhatsApp number
+const EDUCRAFT_WHATSAPP = "2347063421088";
 
-// ─── General Ambassador Slots ──────────────────────────────────────────────────
 const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {
   "001": { name: "Admins",          school: "Co-founders", status: "active" },
   "002": { name: "Noruwosa Zoe",    school: "UNIBEN",      status: "active" },
@@ -77,7 +75,6 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "066": { name: "",                school: "EUI",         status: "vacant"  },
 };
 
-// ─── Core Ambassadors (ECCA) ──────────────────────────────────────────────────
 const CORE_AMBASSADORS: Record<string, { name: string; school: string }> = {
   "ECCA-001": { name: "Chidinma Victory", school: "EUI" },
   "ECCA-002": { name: "Debby",            school: "EUI" },
@@ -86,122 +83,63 @@ const CORE_AMBASSADORS: Record<string, { name: string; school: string }> = {
   "ECCA-005": { name: "General",          school: "Admin" },
 };
 
-// ─── Sub-Ambassadors (ECSA) ───────────────────────────────────────────────────
 const SUB_AMBASSADORS: Record<string, { name: string; school: string; coreId: string }> = {
   "ECSA-001-001": { name: "Rita",     school: "Edwin Clark", coreId: "ECCA-001" },
   "ECSA-001-002": { name: "Praise",   school: "SDU",         coreId: "ECCA-001" },
   "ECSA-001-003": { name: "Queensly", school: "EUI",         coreId: "ECCA-001" },
 };
 
-// ─── Click Tracking ───────────────────────────────────────────────────────────
-// Fire-and-forget: tracking errors NEVER affect redirects.
 async function trackClick(ambassadorId: string): Promise<void> {
-  const url   = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return; // tracking not yet configured — skip silently
-
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) return;
   try {
-    await fetch(`${url}/pipeline`, {
-      method:  "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      // INCR click counter + add to the global set of tracked IDs (for stats lookup)
-      body: JSON.stringify([
-        ["INCR", `clicks:${ambassadorId}`],
-        ["SADD", "ambassador_ids", ambassadorId],
-      ]),
-    });
-  } catch {
-    // Never propagate tracking errors upward
-  }
+    const client = createClient({ url: redisUrl });
+    client.on("error", () => { /* suppress */ });
+    await client.connect();
+    await client.multi()
+      .incr(`clicks:${ambassadorId}`)
+      .sAdd("ambassador_ids", ambassadorId)
+      .exec();
+    await client.disconnect();
+  } catch { /* tracking errors never affect redirects */ }
 }
 
-// ─── Handler ─────────────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const id   = req.query.id   as string | undefined;
   const type = req.query.type as string | undefined;
 
   if (!id) {
-    res.status(400).send(errorPage("❌ Invalid Link", "No slot ID provided. Use a valid ambassador link."));
+    res.status(400).send(errPage("❌ Invalid Link", "No slot ID provided."));
     return;
   }
 
-  // ── Route: ECCA (Core Ambassador recruitment link) ────────────────────────
   if (type === "ecca") {
     const core = CORE_AMBASSADORS[id];
-    if (!core) {
-      res.status(404).send(errorPage("❌ Not Found", "This Core Ambassador link does not exist."));
-      return;
-    }
+    if (!core) { res.status(404).send(errPage("❌ Not Found", "Core Ambassador link not found.")); return; }
     await trackClick(id);
-    const message = encodeURIComponent(
-      `Hi EduCraft! I was brought in by ${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. 🎓`
-    );
-    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${message}`);
+    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${encodeURIComponent(`Hi EduCraft! I was brought in by ${core.name}. I'd love to know more about the EduCraft Ambassadorship Program! 🎓`)}`);
     return;
   }
 
-  // ── Route: ECSA (Sub-Ambassador client referral link) ─────────────────────
   if (type === "ecsa") {
     const sub = SUB_AMBASSADORS[id];
-    if (!sub) {
-      res.status(404).send(errorPage("❌ Not Found", "This Sub-Ambassador link does not exist."));
-      return;
-    }
+    if (!sub) { res.status(404).send(errPage("❌ Not Found", "Sub-Ambassador link not found.")); return; }
     await trackClick(id);
-    const core     = CORE_AMBASSADORS[sub.coreId];
-    const coreName = core ? ` (via ${core.name})` : "";
-    const message  = encodeURIComponent(
-      `Hi EduCraft! I was referred by ${sub.name}${coreName}. I'd like to place an order on the following Services:`
-    );
-    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${message}`);
+    const core = CORE_AMBASSADORS[sub.coreId];
+    const via  = core ? ` (via ${core.name})` : "";
+    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${encodeURIComponent(`Hi EduCraft! I was referred by ${sub.name}${via}. I'd like to place an order on the following Services:`)}`);
     return;
   }
 
-  // ── Route: General Ambassador client referral link ────────────────────────
   const slot = SLOTS[id];
-  if (!slot) {
-    res.status(404).send(errorPage("❌ Not Found", "This ambassador link does not exist. Please contact EduCraft."));
-    return;
-  }
-
+  if (!slot) { res.status(404).send(errPage("❌ Not Found", "Ambassador link not found.")); return; }
   await trackClick(id);
-
-  const message =
-    slot.status === "vacant" || !slot.name
-      ? encodeURIComponent("Hi EduCraft! I'd like to place an order on the following Services:")
-      : encodeURIComponent(`Hi EduCraft! I was referred by ${slot.name}. I'd like to place an order on the following Services:`);
-
-  res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${message}`);
+  const msg = slot.status === "vacant" || !slot.name
+    ? "Hi EduCraft! I'd like to place an order on the following Services:"
+    : `Hi EduCraft! I was referred by ${slot.name}. I'd like to place an order on the following Services:`;
+  res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${encodeURIComponent(msg)}`);
 }
 
-// ─── Branded Error Page ───────────────────────────────────────────────────────
-function errorPage(title: string, body: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>EduCraft</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Segoe UI',sans-serif;background:#FFF9ED;
-         min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-    .card{background:#fff;border:2px solid #E0B846;border-radius:16px;
-          padding:48px 40px;max-width:420px;text-align:center;
-          box-shadow:0 4px 24px rgba(13,87,83,0.10)}
-    .icon{font-size:2.5rem;margin-bottom:16px}
-    h1{font-size:1.3rem;margin-bottom:12px;color:#ef4444}
-    p{color:#0D5753;line-height:1.6;font-size:.95rem}
-    .brand{margin-top:24px;font-size:.75rem;color:#12827c;font-weight:700;letter-spacing:.05em}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">🎓</div>
-    <h1>${title}</h1>
-    <p>${body}</p>
-    <div class="brand">EDUCRAFT — Academic &amp; Technical Documentation Experts</div>
-  </div>
-</body>
-</html>`;
+function errPage(title: string, body: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>EduCraft</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',sans-serif;background:#FFF9ED;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}.card{background:#fff;border:2px solid #E0B846;border-radius:16px;padding:48px 40px;max-width:420px;text-align:center}.icon{font-size:2.5rem;margin-bottom:16px}h1{font-size:1.3rem;margin-bottom:12px;color:#ef4444}p{color:#0D5753;line-height:1.6}.brand{margin-top:24px;font-size:.75rem;color:#12827c;font-weight:700}</style></head><body><div class="card"><div class="icon">🎓</div><h1>${title}</h1><p>${body}</p><div class="brand">EDUCRAFT</div></div></body></html>`;
 }
