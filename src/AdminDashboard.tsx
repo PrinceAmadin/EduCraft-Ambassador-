@@ -107,9 +107,17 @@ export default function AdminDashboard(){
   const[addCoreOpen,setAddCoreOpen]=useState(false);
   const[ncId,setNcId]=useState("");const[ncName,setNcName]=useState("");const[ncSchool,setNcSchool]=useState("");const[ncPct,setNcPct]=useState(10);const[ncErr,setNcErr]=useState("");
 
+  // Edit Core Ambassador state
+  const[editCoreId,setEditCoreId]=useState<string|null>(null);
+  const[ecName,setEcName]=useState("");const[ecSchool,setEcSchool]=useState("");const[ecPct,setEcPct]=useState(10);const[ecErr,setEcErr]=useState("");
+
   // Add Sub Ambassador state
   const[addSubOpen,setAddSubOpen]=useState(false);
   const[nsId,setNsId]=useState("");const[nsName,setNsName]=useState("");const[nsSchool,setNsSchool]=useState("");const[nsCoreId,setNsCoreId]=useState("");const[nsErr,setNsErr]=useState("");
+
+  // Edit Sub Ambassador state
+  const[editSubId,setEditSubId]=useState<string|null>(null);
+  const[esName,setEsName]=useState("");const[esSchool,setEsSchool]=useState("");const[esCoreId,setEsCoreId]=useState("");const[esErr,setEsErr]=useState("");
   const[gh,setGhRaw]=useState<{owner:string;repo:string;token:string}>(()=>lsGet(LS_G)??{owner:"",repo:"",token:""});
   const setGh=(v:typeof gh)=>{setGhRaw(v);lsSet(LS_G,v);};
   const[dep,setDep]=useState<Deploy>("idle");const[depMsg,setDepMsg]=useState("");const[ghOpen,setGhOpen]=useState(false);
@@ -366,6 +374,41 @@ export default function AdminDashboard(){
     setAddSubOpen(false);setNsErr("");setNsId("");setNsName("");setNsSchool("");setNsCoreId("");
   };
 
+  const openEditCore=(a:{id:string;name:string;school:string;percentage:number})=>{
+    setEditCoreId(a.id);setEcName(a.name);setEcSchool(a.school);setEcPct(a.percentage);setEcErr("");
+  };
+  const saveEditCore=()=>{
+    if(!editCoreId)return;
+    if(!ecName.trim()){setEcErr("Name is required.");return;}
+    setData({...data,coreAmbassadors:data.coreAmbassadors.map(c=>
+      c.id===editCoreId?{...c,name:ecName.trim(),school:ecSchool.trim(),percentage:ecPct}:c
+    )});
+    setEditCoreId(null);setEcErr("");
+  };
+
+  const openEditSub=(a:{id:string;name:string;school:string;coreId:string})=>{
+    setEditSubId(a.id);setEsName(a.name);setEsSchool(a.school);setEsCoreId(a.coreId);setEsErr("");
+  };
+  const saveEditSub=()=>{
+    if(!editSubId)return;
+    if(!esName.trim()){setEsErr("Name is required.");return;}
+    const coreFullId=esCoreId.trim().toUpperCase().startsWith("ECCA-")?esCoreId.trim().toUpperCase():`ECCA-${esCoreId.trim().toUpperCase()}`;
+    if(!data.coreAmbassadors.find(c=>c.id===coreFullId)){setEsErr(`Core Ambassador ${coreFullId} does not exist.`);return;}
+    setData({...data,subAmbassadors:data.subAmbassadors.map(s=>
+      s.id===editSubId?{...s,name:esName.trim(),school:esSchool.trim(),coreId:coreFullId}:s
+    )});
+    setEditSubId(null);setEsErr("");
+  };
+
+  const removeCore=(id:string)=>{
+    if(!window.confirm(`Remove Core Ambassador ${id}? This will not affect their Sub Ambassadors' links, but they will no longer earn 3% from Sub jobs.`))return;
+    setData({...data,coreAmbassadors:data.coreAmbassadors.filter(c=>c.id!==id)});
+  };
+  const removeSub=(id:string)=>{
+    if(!window.confirm(`Remove Sub Ambassador ${id}? Their referral link will stop working.`))return;
+    setData({...data,subAmbassadors:data.subAmbassadors.filter(s=>s.id!==id)});
+  };
+
   const doDeploy=async()=>{if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}setDep("busy");setDepMsg("Starting…");try{await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);setDep("ok");}catch(e){setDep("fail");setDepMsg(`❌ ${(e as Error).message}`);}};
 
   // Nav tabs
@@ -471,7 +514,7 @@ export default function AdminDashboard(){
           <div style={s.info}><div><p>Core Ambassadors earn their base percentage plus <strong>3%</strong> for each Sub-Ambassador job. Share the Recruit Link with potential Sub-Ambassadors.</p></div></div>
           <div style={s.tableWrap}>
             <table style={s.table}>
-              <thead><tr style={s.thead}>{["No.","ID","Name","School","Base %","Subs","Total %","Recruit Link",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+              <thead><tr style={s.thead}>{["No.","ID","Name","School","Base %","Subs","Total %","Recruit Link","",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>{data.coreAmbassadors.map((a,i)=>{const subs=data.subAmbassadors.filter(sb=>sb.coreId===a.id).length;const tot=a.percentage+subs*3;const ck=`ec-${a.id}`;return(
                 <tr key={a.id} style={{...s.tr,background:i%2===0?C.white:C.milk}}>
                   <td style={s.td}><span style={s.num}>{i+1}.</span></td><td style={s.td}><span style={s.slotId}>{a.id}</span></td>
@@ -481,6 +524,12 @@ export default function AdminDashboard(){
                   <td style={s.td}><span style={{...s.badge,background:C.yellow,color:C.greenDark,fontWeight:800}}>{tot}%</span></td>
                   <td style={s.td}><span style={s.link}>/ECCA/{a.id}</span></td>
                   <td style={s.td}><button style={{...s.cpBtn,...(copied===ck?s.cpDone:{})}} onClick={()=>copy(`${base}/ECCA/${a.id}`,ck)}>{copied===ck?"✓":"Copy"}</button></td>
+                  <td style={s.td}>
+                    <div style={{display:"flex",gap:6}}>
+                      <button style={{...s.cpBtn,fontSize:"0.76rem"}} onClick={()=>openEditCore(a)}>Edit</button>
+                      <button style={{...s.cpBtn,fontSize:"0.76rem",color:C.red,borderColor:"#fca5a5"}} onClick={()=>removeCore(a.id)}>Remove</button>
+                    </div>
+                  </td>
                 </tr>
               );})}</tbody>
             </table>
@@ -496,7 +545,7 @@ export default function AdminDashboard(){
           <div style={s.info}><div><p>Sub-Ambassadors earn <strong>7%</strong> per job. Their Core Ambassador earns an additional <strong>3%</strong> per Sub-Ambassador job.</p></div></div>
           <div style={s.tableWrap}>
             <table style={s.table}>
-              <thead><tr style={s.thead}>{["No.","ID","Name","School","%","Under (Core)","Client Link",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+              <thead><tr style={s.thead}>{["No.","ID","Name","School","%","Under (Core)","Client Link","",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>{data.subAmbassadors.map((a,i)=>{const core=data.coreAmbassadors.find(c=>c.id===a.coreId);const ck=`es-${a.id}`;return(
                 <tr key={a.id} style={{...s.tr,background:i%2===0?C.white:C.milk}}>
                   <td style={s.td}><span style={s.num}>{i+1}.</span></td><td style={s.td}><span style={s.slotId}>{a.id}</span></td>
@@ -505,6 +554,12 @@ export default function AdminDashboard(){
                   <td style={s.td}>{core?<span style={{color:C.green,fontWeight:600}}>{core.name}</span>:<span style={{color:"#bbb"}}>—</span>}</td>
                   <td style={s.td}><span style={s.link}>/ECSA/{a.id.replace(/^ECSA/,"")}</span></td>
                   <td style={s.td}><button style={{...s.cpBtn,...(copied===ck?s.cpDone:{})}} onClick={()=>copy(`${base}/ECSA/${a.id.replace(/^ECSA/,"")}`,ck)}>{copied===ck?"Copied":"Copy"}</button></td>
+                  <td style={s.td}>
+                    <div style={{display:"flex",gap:6}}>
+                      <button style={{...s.cpBtn,fontSize:"0.76rem"}} onClick={()=>openEditSub(a)}>Edit</button>
+                      <button style={{...s.cpBtn,fontSize:"0.76rem",color:C.red,borderColor:"#fca5a5"}} onClick={()=>removeSub(a.id)}>Remove</button>
+                    </div>
+                  </td>
                 </tr>
               );})}</tbody>
             </table>
@@ -830,6 +885,87 @@ export default function AdminDashboard(){
                 {epSt==="busy"?"Saving…":epSt==="ok"?"Saved — Close when ready":"Save Corrections"}
               </button>
               <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setEditPendingId(null);setEpSt("idle");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Core Ambassador Overlay ─────────────────────────────────────── */}
+      {editCoreId&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setEditCoreId(null);setEcErr("");}}}>
+          <div style={{...s.overlayBox,maxWidth:500}}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Edit Core Ambassador</div>
+                <div style={s.overlaySub}>{editCoreId}</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setEditCoreId(null);setEcErr("");}}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Full Name *</label>
+                <input style={s.fInp} value={ecName} onChange={e=>setEcName(e.target.value)} placeholder="Full name"/>
+              </div>
+              <div>
+                <label style={s.fLabel}>School</label>
+                <input style={s.fInp} value={ecSchool} onChange={e=>setEcSchool(e.target.value)} placeholder="EUI, UNIBEN…"/>
+              </div>
+              <div>
+                <label style={s.fLabel}>Base Commission %</label>
+                <input style={s.fInp} type="number" min="1" max="100" value={ecPct} onChange={e=>setEcPct(parseInt(e.target.value)||10)}/>
+              </div>
+              <div style={{gridColumn:"1/-1",background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.green}`,borderRadius:4,padding:"10px 14px",fontSize:"0.82rem",color:C.greenDark,lineHeight:1.7}}>
+                Updated commission: <strong>{ecPct}%</strong> per direct job + <strong>3%</strong> per Sub Ambassador job.
+                Total % updates automatically in the leaderboard.
+              </div>
+            </div>
+            {ecErr&&<p style={{color:C.red,fontSize:"0.82rem",marginBottom:12}}>{ecErr}</p>}
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:C.green,color:C.white,flex:1}} onClick={saveEditCore}>Save Changes</button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setEditCoreId(null);setEcErr("");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Sub Ambassador Overlay ──────────────────────────────────────── */}
+      {editSubId&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setEditSubId(null);setEsErr("");}}}>
+          <div style={{...s.overlayBox,maxWidth:500}}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Edit Sub Ambassador</div>
+                <div style={s.overlaySub}>{editSubId}</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setEditSubId(null);setEsErr("");}}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Full Name *</label>
+                <input style={s.fInp} value={esName} onChange={e=>setEsName(e.target.value)} placeholder="Full name"/>
+              </div>
+              <div>
+                <label style={s.fLabel}>School</label>
+                <input style={s.fInp} value={esSchool} onChange={e=>setEsSchool(e.target.value)} placeholder="EUI, UNIBEN…"/>
+              </div>
+              <div>
+                <label style={{...s.fLabel,color:C.green}}>Core Ambassador Slot ID *</label>
+                <input style={s.fInp} value={esCoreId} onChange={e=>setEsCoreId(e.target.value)} placeholder="e.g. ECCA-001"/>
+                {esCoreId.trim()&&(()=>{
+                  const cid=esCoreId.trim().toUpperCase().startsWith("ECCA-")?esCoreId.trim().toUpperCase():`ECCA-${esCoreId.trim().toUpperCase()}`;
+                  const core=data.coreAmbassadors.find(c=>c.id===cid);
+                  return<p style={{fontSize:"0.72rem",marginTop:4,color:core?C.green:C.red}}>{core?`Found: ${core.name}`:"Not found"}</p>;
+                })()}
+              </div>
+              <div style={{gridColumn:"1/-1",background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.yellowDark}`,borderRadius:4,padding:"10px 14px",fontSize:"0.82rem",color:C.greenDark,lineHeight:1.7}}>
+                Reassigning to a different Core Ambassador will update the commission flow immediately.
+                This Sub still earns <strong>7%</strong> per job.
+              </div>
+            </div>
+            {esErr&&<p style={{color:C.red,fontSize:"0.82rem",marginBottom:12}}>{esErr}</p>}
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:C.green,color:C.white,flex:1}} onClick={saveEditSub}>Save Changes</button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setEditSubId(null);setEsErr("");}}>Cancel</button>
             </div>
           </div>
         </div>
