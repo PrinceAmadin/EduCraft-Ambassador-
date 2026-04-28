@@ -81,7 +81,20 @@ export default function AdminDashboard(){
   const[copied,setCopied]=useState<string|null>(null);
   const[menu,setMenu]=useState(false);
   const[mob,setMob]=useState(window.innerWidth<=640);
-  useEffect(()=>{const h=()=>setMob(window.innerWidth<=640);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);},[]);
+  const[scrollY,setScrollY]=useState(0);
+
+  // Broadcast state
+  const[bcSubject,setBcSubject]=useState("");
+  const[bcMessage,setBcMessage]=useState("");
+  const[bcSt,setBcSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
+  const[bcMsg,setBcMsg]=useState("");
+  useEffect(()=>{
+    const hr=()=>setMob(window.innerWidth<=640);
+    const hs=()=>setScrollY(window.scrollY);
+    window.addEventListener("resize",hr);
+    window.addEventListener("scroll",hs,{passive:true});
+    return()=>{window.removeEventListener("resize",hr);window.removeEventListener("scroll",hs);};
+  },[]);
 
   // ── Manage ───────────────────────────────────────────────────────────────────
   const[editId,setEditId]=useState<string|null>(null);
@@ -256,6 +269,18 @@ export default function AdminDashboard(){
     }catch(e){setResetSt("fail");setResetMsg(`Error: ${(e as Error).message}`);}
   };
 
+  const sendBroadcast=async()=>{
+    if(!bcSubject.trim()){setBcMsg("Subject is required.");setBcSt("fail");return;}
+    if(!bcMessage.trim()){setBcMsg("Message is required.");setBcSt("fail");return;}
+    setBcSt("busy");setBcMsg("");
+    try{
+      const r=await fetch("/api/broadcast",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:bcSubject,message:bcMessage,adminSecret:secret})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed");
+      setBcSt("ok");setBcMsg(`Sent to ${d.sent} ambassador${d.sent!==1?"s":""}.${d.failed>0?` ${d.failed} failed.`:""}`);
+    }catch(e){setBcSt("fail");setBcMsg(`Error: ${(e as Error).message}`);}
+  };
+
   const startEdit=(id:string)=>{const sl=data.slots[id];setEditId(id);setEditName(sl.name);setEditSchool(sl.school);setEditSt(sl.status);};
   const saveEdit=()=>{if(!editId)return;setData({...data,slots:{...data.slots,[editId]:{name:editName,school:editSchool,status:editSt}}});setEditId(null);};
   const saveNew=()=>{const id=newId.trim().padStart(3,"0");if(!id){setAddErr("Slot ID required.");return;}if(!newName.trim()){setAddErr("Name required.");return;}if(data.slots[id]){setAddErr(`Slot ${id} already exists.`);return;}setData({...data,slots:{...data.slots,[id]:{name:newName.trim(),school:newSchool.trim(),status:newSt}}});setAddOpen(false);setAddErr("");};
@@ -340,7 +365,10 @@ export default function AdminDashboard(){
 
         {/* ════ SCHOOLS ════ */}
         {tab==="schools"&&(<>
-          <div style={s.secLabel}>School Coverage</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:12,marginBottom:12}}>
+            <div style={s.secLabel}>School Coverage</div>
+            <div style={{fontSize:"0.8rem",fontWeight:700,color:C.white,background:C.green,borderRadius:999,padding:"2px 10px"}}>{schoolStats.length} school{schoolStats.length!==1?"s":""}</div>
+          </div>
           <div style={s.schoolGrid}>
             {schoolStats.map(([abbr,st])=>{const tot=st.active+st.vacant;const pct=Math.round((st.active/tot)*100);return(
               <div key={abbr} style={s.schoolCard}>
@@ -387,8 +415,8 @@ export default function AdminDashboard(){
                   <td style={s.td}><strong style={{color:C.greenDark}}>{a.name}</strong></td><td style={s.td}><span style={s.schoolTag}>{a.school}</span></td>
                   <td style={s.td}><span style={{...s.badge,background:C.yellowDark,color:C.greenDark}}>{a.percentage}%</span></td>
                   <td style={s.td}>{core?<span style={{color:C.green,fontWeight:600}}>{core.name}</span>:<span style={{color:"#bbb"}}>—</span>}</td>
-                  <td style={s.td}><span style={s.link}>/ECSA/{a.id}</span></td>
-                  <td style={s.td}><button style={{...s.cpBtn,...(copied===ck?s.cpDone:{})}} onClick={()=>copy(`${base}/ECSA/${a.id}`,ck)}>{copied===ck?"✓":"Copy"}</button></td>
+                  <td style={s.td}><span style={s.link}>/ECSA/{a.id.replace(/^ECSA/,"")}</span></td>
+                  <td style={s.td}><button style={{...s.cpBtn,...(copied===ck?s.cpDone:{})}} onClick={()=>copy(`${base}/ECSA/${a.id.replace(/^ECSA/,"")}`,ck)}>{copied===ck?"Copied":"Copy"}</button></td>
                 </tr>
               );})}</tbody>
             </table>
@@ -458,41 +486,6 @@ export default function AdminDashboard(){
               </div>
             </div>
           </div>
-
-          {/* Log order panel */}
-          {logId&&(
-            <div style={s.editCard}>
-              <div style={{fontWeight:700,color:C.greenDark,marginBottom:14,fontSize:"1rem"}}>
-                Log Order — <span style={{color:C.green}}>{logName}</span>
-                <span style={{marginLeft:8,fontSize:"0.74rem",color:"#aaa",fontWeight:400}}>({logId})</span>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:14}}>
-                <div>
-                  <label style={s.fLabel}>Job Amount ₦ (optional)</label>
-                  <input style={s.fInp} placeholder="e.g. 5000" value={logAmt} onChange={e=>setLogAmt(e.target.value)}/>
-                </div>
-                <div>
-                  <label style={s.fLabel}>Commission %</label>
-                  <input style={s.fInp} type="number" min="1" max="100" value={logPct} onChange={e=>setLogPct(e.target.value)}/>
-                </div>
-              </div>
-              {amtNum>0&&(
-                <div style={{background:C.milk,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:"0.88rem",color:C.greenDark,fontWeight:600}}>
-                  Commission: <strong style={{color:C.green}}>{naira(commission)}</strong>
-                  <span style={{color:"#aaa",marginLeft:6,fontWeight:400}}>({pctNum}% of {naira(amtNum)})</span>
-                </div>
-              )}
-              <label style={s.fLabel}>Job Description (optional)</label>
-              <input style={{...s.fInp,marginBottom:14}} placeholder="e.g. Final year project, Seminar paper…" value={logDesc} onChange={e=>setLogDesc(e.target.value)}/>
-              {logMsg&&<div style={{...s.banner,marginBottom:14,borderColor:logSt==="fail"?C.red:C.green,background:logSt==="fail"?C.redLight:C.white,color:logSt==="fail"?C.red:C.greenDark}}>{logMsg}</div>}
-              <div style={{display:"flex",gap:8}}>
-                <button style={{...s.actBtn,background:logSt==="ok"?C.green:C.greenDark,color:C.yellow,opacity:logSt==="busy"?0.7:1}} onClick={logOrder} disabled={logSt==="busy"||logSt==="ok"}>
-                  {logSt==="busy"?"Logging…":logSt==="ok"?"✓ Logged!":"Confirm Order"}
-                </button>
-                <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>setLogId(null)}>Cancel</button>
-              </div>
-            </div>
-          )}
 
           {/* Tracking settings */}
           <div style={{...s.settBox,marginBottom:16}}>
@@ -577,7 +570,35 @@ export default function AdminDashboard(){
               </tbody>
             </table>
           </div>
-          <p style={s.footer}>{tRows.length} ambassadors · Conv% = Orders ÷ Clicks · Click ↻ for latest data</p>
+          <p style={s.footer}>{tRows.length} ambassadors · Conv% = Orders ÷ Clicks · Click Refresh for latest data</p>
+
+          {/* Broadcast message */}
+          <div style={{...s.settBox,marginTop:24}}>
+            <button style={s.settToggle} onClick={()=>setBcMsg(p=>p===""?"open":"")}>
+              Broadcast Message to All Ambassadors {bcMsg===""?"▼":"▲"}
+            </button>
+            {bcMsg!==""&&(
+              <div style={{padding:"20px 18px"}}>
+                <p style={{fontSize:"0.83rem",color:"#666",marginBottom:16,lineHeight:1.6}}>
+                  Sends an email to all <strong>approved</strong> ambassadors who have registered. Use this for announcements, updates, or important notices.
+                </p>
+                <div style={{marginBottom:12}}>
+                  <label style={s.fLabel}>Subject *</label>
+                  <input style={s.fInp} placeholder="e.g. Important Update from EduCraft" value={bcSubject} onChange={e=>setBcSubject(e.target.value)}/>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={s.fLabel}>Message *</label>
+                  <textarea style={{...s.fInp,height:140,resize:"vertical" as const,fontFamily:"inherit"}} placeholder="Type your message here. Use line breaks for paragraphs." value={bcMessage} onChange={e=>setBcMessage(e.target.value)}/>
+                </div>
+                <p style={{fontSize:"0.76rem",color:"#aaa",marginBottom:14}}>Note: Images, files, and videos cannot be attached via email here. For rich media, include a link in your message text.</p>
+                {bcSt!=="idle"&&bcMsg!=="open"&&<div style={{...s.banner,borderColor:bcSt==="fail"?C.red:C.green,background:bcSt==="fail"?C.redLight:C.white,color:bcSt==="fail"?C.red:C.greenDark,marginBottom:14}}>{bcMsg}</div>}
+                <button style={{...s.actBtn,background:bcSt==="ok"?C.green:C.greenDark,color:C.yellow,opacity:bcSt==="busy"?0.7:1}} onClick={sendBroadcast} disabled={bcSt==="busy"||bcSt==="ok"}>
+                  {bcSt==="busy"?"Sending…":bcSt==="ok"?"Sent":"Send to All Ambassadors"}
+                </button>
+                {bcSt==="ok"&&<button style={{...s.actBtn,background:C.milk,color:C.greenDark,marginLeft:8,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setBcSt("idle");setBcSubject("");setBcMessage("");setBcMsg("open");}}>New Message</button>}
+              </div>
+            )}
+          </div>
         </>)}
 
         {/* ════ MANAGE ════ */}
@@ -609,72 +630,19 @@ export default function AdminDashboard(){
             )}
           </div>
 
-          {/* Add form */}
-          {addOpen&&(
-            <div style={s.editCard}>
-              <div style={{fontWeight:700,color:C.greenDark,marginBottom:16}}>Add New Ambassador</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}}>
-                {[{l:"Slot ID",v:newId,s:setNewId,p:"e.g. 067"},{l:"Full Name",v:newName,s:setNewName,p:"Name"},{l:"School",v:newSchool,s:setNewSchool,p:"EUI, UNIBEN…"}].map(f=>(
-                  <div key={f.l}><label style={s.fLabel}>{f.l}</label><input style={s.fInp} value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p}/></div>
-                ))}
-                <div><label style={s.fLabel}>Status</label><div style={{display:"flex",gap:8,marginTop:2}}>
-                  {(["active","vacant"] as const).map(st=><button key={st} style={{...s.fBtn,...(newSt===st?{background:st==="active"?C.green:C.yellowDark,color:st==="active"?C.white:C.greenDark,border:"none"}:{})}} onClick={()=>setNewSt(st)}>{st==="active"?"● Active":"○ Vacant"}</button>)}
-                </div></div>
-              </div>
-              {addErr&&<p style={{color:C.red,fontSize:"0.82rem",marginTop:10}}>⚠️ {addErr}</p>}
-              <div style={{display:"flex",gap:8,marginTop:16}}>
-                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={saveNew}>Add</button>
-                <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setAddOpen(false);setAddErr("");}}>Cancel</button>
-              </div>
-            </div>
-          )}
-
-          {/* Edit form */}
-          {editId&&(
-            <div style={s.editCard}>
-              <div style={{fontWeight:800,color:C.greenDark,marginBottom:16}}>Editing <span style={{color:C.green}}>EduCraftA-{editId}</span></div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}}>
-                {[{l:"Name",v:editName,s:setEditName,p:"Name"},{l:"School",v:editSchool,s:setEditSchool,p:"EUI…"}].map(f=>(
-                  <div key={f.l}><label style={s.fLabel}>{f.l}</label><input style={s.fInp} value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p}/></div>
-                ))}
-                <div><label style={s.fLabel}>Status</label><div style={{display:"flex",gap:8,marginTop:2}}>
-                  {(["active","vacant"] as const).map(st=><button key={st} style={{...s.fBtn,...(editSt===st?{background:st==="active"?C.green:C.yellowDark,color:st==="active"?C.white:C.greenDark,border:"none"}:{})}} onClick={()=>setEditSt(st)}>{st==="active"?"● Active":"○ Vacant"}</button>)}
-                </div></div>
-              </div>
-              <div style={{display:"flex",gap:8,marginTop:16}}>
-                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={saveEdit}>Save</button>
-                <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>setEditId(null)}>Cancel</button>
-              </div>
-            </div>
-          )}
-
           {resetMsg&&<div style={{...s.banner,borderColor:resetSt==="fail"?C.red:C.green,background:resetSt==="fail"?C.redLight:C.white,color:resetSt==="fail"?C.red:C.greenDark,marginBottom:16}}>{resetMsg}</div>}
           <div style={s.tableWrap}>
             <table style={s.table}>
               <thead><tr style={s.thead}>{["Slot ID","Name","School","Status","Edit","Reset Reg."].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {mRows.map(([id,sl],i)=>(
-                  <tr key={id} style={{...s.tr,background:i%2===0?C.white:C.milk,outline:editId===id?`2px solid ${C.green}`:"none"}}>
+                  <tr key={id} style={{...s.tr,background:i%2===0?C.white:C.milk}}>
                     <td style={s.td}><span style={s.slotId}>EduCraftA-{id}</span></td>
                     <td style={s.td}>{sl.name?<strong style={{color:C.greenDark}}>{sl.name}</strong>:<em style={{color:"#bbb"}}>— Vacant —</em>}</td>
                     <td style={s.td}><span style={s.schoolTag}>{sl.school||"—"}</span></td>
                     <td style={s.td}><span style={{...s.badge,background:sl.status==="active"?C.green:C.yellowDark,color:sl.status==="active"?C.white:C.greenDark}}>{sl.status==="active"?"Active":"Vacant"}</span></td>
-                    <td style={s.td}><button style={{...s.cpBtn,...(editId===id?{background:C.yellow,color:C.greenDark}:{})}} onClick={()=>editId===id?setEditId(null):startEdit(id)}>{editId===id?"Editing…":"Edit"}</button></td>
-                    <td style={s.td}>
-                      {resetId===id?(
-                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                          <span style={{fontSize:"0.76rem",color:C.red,fontWeight:600}}>Clear registration?</span>
-                          <button style={{...s.cpBtn,background:C.red,color:C.white,border:"none",fontSize:"0.74rem",padding:"4px 10px"}} onClick={()=>resetSlot(id)} disabled={resetSt==="busy"}>
-                            {resetSt==="busy"?"Clearing…":"Confirm"}
-                          </button>
-                          <button style={{...s.cpBtn,fontSize:"0.74rem",padding:"4px 10px"}} onClick={()=>setResetId(null)}>Cancel</button>
-                        </div>
-                      ):(
-                        <button style={{...s.cpBtn,fontSize:"0.76rem",color:"#888",borderColor:"#ddd"}} onClick={()=>{setResetId(id);setResetSt("idle");setResetMsg("");}}>
-                          Reset
-                        </button>
-                      )}
-                    </td>
+                    <td style={s.td}><button style={s.cpBtn} onClick={()=>startEdit(id)}>Edit</button></td>
+                    <td style={s.td}><button style={{...s.cpBtn,fontSize:"0.76rem",color:"#888",borderColor:"#ddd"}} onClick={()=>{setResetId(id);setResetSt("idle");setResetMsg("");}}>Reset</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -685,6 +653,163 @@ export default function AdminDashboard(){
 
         <p style={s.footer}>EduCraft Ambassador Panel · Powered by Vercel</p>
       </main>
+
+      {/* ── Add Ambassador Overlay ───────────────────────────────────────────── */}
+      {addOpen&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setAddOpen(false);setAddErr("");}}}>
+          <div style={s.overlayBox}>
+            <div style={s.overlayHead}>
+              <div><div style={s.overlayTitle}>Add New Ambassador</div><div style={s.overlaySub}>New slot will appear instantly across all tabs</div></div>
+              <button style={s.overlayClose} onClick={()=>{setAddOpen(false);setAddErr("");}}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              {[{l:"Slot ID",v:newId,s:setNewId,p:"e.g. 067"},{l:"Full Name",v:newName,s:setNewName,p:"Ambassador's name"},{l:"School",v:newSchool,s:setNewSchool,p:"EUI, UNIBEN…"}].map(f=>(
+                <div key={f.l} style={f.l==="School"?{gridColumn:"1/-1"}:{}}><label style={s.fLabel}>{f.l}</label><input style={s.fInp} value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p}/></div>
+              ))}
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Status</label>
+                <div style={{display:"flex",gap:8,marginTop:4}}>
+                  {(["active","vacant"] as const).map(st=>(
+                    <button key={st} style={{...s.fBtn,...(newSt===st?{background:st==="active"?C.green:C.yellowDark,color:st==="active"?C.white:C.greenDark,border:"none"}:{})}} onClick={()=>setNewSt(st)}>
+                      {st==="active"?"Active":"Vacant"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {addErr&&<p style={{color:C.red,fontSize:"0.82rem",marginBottom:12}}>{addErr}</p>}
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:C.green,color:C.white,flex:1}} onClick={saveNew}>Add Ambassador</button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setAddOpen(false);setAddErr("");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Ambassador Overlay ──────────────────────────────────────────── */}
+      {editId&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget)setEditId(null);}}>
+          <div style={s.overlayBox}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Edit Slot</div>
+                <div style={s.overlaySub}>EduCraftA-{editId}</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>setEditId(null)}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div><label style={s.fLabel}>Name</label><input style={s.fInp} value={editName} onChange={e=>setEditName(e.target.value)} placeholder="Ambassador name"/></div>
+              <div><label style={s.fLabel}>School</label><input style={s.fInp} value={editSchool} onChange={e=>setEditSchool(e.target.value)} placeholder="EUI, UNIBEN…"/></div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Status</label>
+                <div style={{display:"flex",gap:8,marginTop:4}}>
+                  {(["active","vacant"] as const).map(st=>(
+                    <button key={st} style={{...s.fBtn,...(editSt===st?{background:st==="active"?C.green:C.yellowDark,color:st==="active"?C.white:C.greenDark,border:"none"}:{})}} onClick={()=>setEditSt(st)}>
+                      {st==="active"?"Active":"Vacant"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:C.green,color:C.white,flex:1}} onClick={saveEdit}>Save Changes</button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>setEditId(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reset Registration Overlay ───────────────────────────────────────── */}
+      {resetId&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setResetId(null);setResetSt("idle");}}}>
+          <div style={{...s.overlayBox,maxWidth:400}}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Reset Registration</div>
+                <div style={s.overlaySub}>EduCraftA-{resetId}</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setResetId(null);setResetSt("idle");}}>✕</button>
+            </div>
+            <div style={{background:"#fef2f2",border:`1px solid #fca5a5`,borderRadius:8,padding:"14px 16px",marginBottom:16,fontSize:"0.86rem",color:"#7f1d1d",lineHeight:1.7}}>
+              <strong>This will permanently clear:</strong><br/>
+              — Registration profile &amp; email<br/>
+              — All click counts<br/>
+              — All logged orders &amp; order history<br/><br/>
+              The slot itself stays. The new ambassador can register fresh.
+            </div>
+            {resetSt==="ok"&&<div style={{...s.banner,borderColor:C.green,background:C.white,color:C.greenDark,marginBottom:14}}>{resetMsg}</div>}
+            {resetSt==="fail"&&<div style={{...s.banner,borderColor:C.red,background:C.redLight,color:C.red,marginBottom:14}}>{resetMsg}</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button
+                style={{...s.actBtn,background:resetSt==="ok"?C.green:C.red,color:C.white,flex:1,opacity:resetSt==="busy"?0.7:1}}
+                onClick={()=>resetSlot(resetId)}
+                disabled={resetSt==="busy"||resetSt==="ok"}
+              >
+                {resetSt==="busy"?"Clearing…":resetSt==="ok"?"Done — Close when ready":"Confirm Reset"}
+              </button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setResetId(null);setResetSt("idle");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Log Order Overlay Modal ──────────────────────────────────────────── */}
+      {logId&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget)setLogId(null);}}>
+          <div style={s.overlayBox}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Log Order</div>
+                <div style={s.overlaySub}>{logName} · {logId}</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>setLogId(null)}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div>
+                <label style={s.fLabel}>Job Amount ₦ (optional)</label>
+                <input style={s.fInp} placeholder="e.g. 5000" value={logAmt} onChange={e=>setLogAmt(e.target.value)}/>
+              </div>
+              <div>
+                <label style={s.fLabel}>Commission %</label>
+                <input style={s.fInp} type="number" min="1" max="100" value={logPct} onChange={e=>setLogPct(e.target.value)}/>
+              </div>
+            </div>
+            {amtNum>0&&(
+              <div style={{background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.green}`,borderRadius:4,padding:"10px 14px",marginBottom:14,fontSize:"0.88rem",color:C.greenDark}}>
+                Commission: <strong style={{color:C.green}}>{naira(commission)}</strong>
+                <span style={{color:"#aaa",marginLeft:6}}>({pctNum}% of {naira(amtNum)})</span>
+              </div>
+            )}
+            <div style={{marginBottom:14}}>
+              <label style={s.fLabel}>Job Description (optional)</label>
+              <input style={s.fInp} placeholder="e.g. Final year project, Seminar paper…" value={logDesc} onChange={e=>setLogDesc(e.target.value)}/>
+            </div>
+            {logMsg&&<div style={{...s.banner,marginBottom:14,borderColor:logSt==="fail"?C.red:C.green,background:logSt==="fail"?C.redLight:C.white,color:logSt==="fail"?C.red:C.greenDark}}>{logMsg}</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:logSt==="ok"?C.green:C.greenDark,color:C.yellow,opacity:logSt==="busy"?0.7:1,flex:1}} onClick={logOrder} disabled={logSt==="busy"||logSt==="ok"}>
+                {logSt==="busy"?"Logging…":logSt==="ok"?"Logged — Close when ready":"Confirm Order"}
+              </button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>setLogId(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Scroll Buttons ────────────────────────────────────────────────────── */}
+      {scrollY>300&&(
+        <button
+          onClick={()=>window.scrollTo({top:0,behavior:"smooth"})}
+          style={{position:"fixed",bottom:72,right:20,zIndex:900,width:40,height:40,borderRadius:"50%",background:C.greenDark,color:C.yellow,border:"none",cursor:"pointer",fontSize:"1.1rem",fontWeight:700,boxShadow:"0 2px 10px rgba(0,0,0,0.25)",display:"flex",alignItems:"center",justifyContent:"center"}}
+          title="Back to top"
+        >↑</button>
+      )}
+      {scrollY<100&&(
+        <button
+          onClick={()=>window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"})}
+          style={{position:"fixed",bottom:24,right:20,zIndex:900,width:40,height:40,borderRadius:"50%",background:C.greenDark,color:C.yellow,border:"none",cursor:"pointer",fontSize:"1.1rem",fontWeight:700,boxShadow:"0 2px 10px rgba(0,0,0,0.25)",display:"flex",alignItems:"center",justifyContent:"center"}}
+          title="Scroll to bottom"
+        >↓</button>
+      )}
     </div>
   );
 }
@@ -748,4 +873,10 @@ const s:Record<string,React.CSSProperties>={
   settBox:{background:C.white,border:`1.5px solid ${C.milkDark}`,borderRadius:12,overflow:"hidden"},
   settToggle:{width:"100%",background:"none",border:"none",borderBottom:`1.5px solid ${C.milkDark}`,padding:"14px 18px",textAlign:"left",cursor:"pointer",fontWeight:700,color:C.greenDark,fontSize:"0.88rem"},
   banner:{border:"1.5px solid",borderRadius:8,padding:"12px 16px",fontSize:"0.85rem",fontWeight:600},
+  overlay:{position:"fixed" as const,inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16},
+  overlayBox:{background:C.white,borderRadius:12,padding:"28px 28px 24px",maxWidth:480,width:"100%",boxShadow:"0 8px 40px rgba(0,0,0,0.25)",maxHeight:"90vh",overflowY:"auto" as const},
+  overlayHead:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20},
+  overlayTitle:{fontWeight:700,color:C.greenDark,fontSize:"1rem"},
+  overlaySub:{fontSize:"0.82rem",color:C.green,marginTop:2},
+  overlayClose:{background:"none",border:"none",fontSize:"1.1rem",cursor:"pointer",color:"#999",padding:"4px 8px",lineHeight:1},
 };

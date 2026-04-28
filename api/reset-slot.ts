@@ -1,6 +1,4 @@
-// api/reset-slot.ts
-// Clears an ambassador's approved profile so a new person can register for that slot.
-// Use this when a slot is reassigned to a new ambassador.
+// api/reset-slot.ts — clears ALL tracking data for a slot so a new ambassador can start fresh
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "redis";
 
@@ -24,17 +22,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     client.on("error", () => {});
     await client.connect();
 
-    // Remove profile, approved status, and pending status for this slot
-    // Clicks and orders history is preserved for records
+    // Clear EVERYTHING for this slot: profile, approval status, clicks, orders, order log
     await client.multi()
       .del(`profile:${id}`)
       .del(`pending:${id}`)
+      .del(`clicks:${id}`)
+      .del(`orders:${id}`)
+      .del(`orders:${id}:log`)
       .sRem("approved_ids", id)
       .sRem("pending_ids", id)
+      .sRem("ambassador_ids", id)
       .exec();
 
     await client.disconnect();
-    res.status(200).json({ success: true, message: `Slot ${id} registration cleared. The new ambassador can now register.` });
+    res.status(200).json({ success: true, message: `Slot ${id} fully reset. All clicks, orders, and registration data cleared.` });
   } catch (err) {
     try { await client?.disconnect(); } catch {}
     console.error("reset-slot error:", err);

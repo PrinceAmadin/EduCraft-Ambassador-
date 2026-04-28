@@ -14,17 +14,17 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "004": { name: "Marong",          school: "EUI",         status: "active" },
   "005": { name: "Chidinma",        school: "EUI",         status: "active" },
   "006": { name: "Debby",           school: "EUI",         status: "active" },
-  "007": { name: "Osheho",          school: "EUI",         status: "active" },
+  "007": { name: "Osbebo",          school: "EUI",         status: "active" },
   "008": { name: "Ayomidele",       school: "UNIBEN",      status: "active" },
   "009": { name: "Goodness",        school: "EUI",         status: "active" },
-  "010": { name: "Ib Nation",       school: "EUI",         status: "active" },
+  "010": { name: "Ik Nation",       school: "EUI",         status: "active" },
   "011": { name: "Fortune",         school: "EUI",         status: "active" },
   "012": { name: "Obehi",           school: "EUI",         status: "active" },
   "013": { name: "Princewill",      school: "EUI",         status: "active" },
   "014": { name: "Sultan",          school: "EUI",         status: "active" },
   "015": { name: "Taiwo",           school: "EUI",         status: "active" },
   "016": { name: "Aisosa (MLS)",    school: "EUI",         status: "active" },
-  "017": { name: "JVS",             school: "BRAND",         status: "active" },
+  "017": { name: "JVS",             school: "EUI",         status: "active" },
   "018": { name: "Dr Abel",         school: "EUI",         status: "active" },
   "019": { name: "",                school: "EUI",         status: "vacant"  },
   "020": { name: "",                school: "EUI",         status: "vacant"  },
@@ -34,7 +34,7 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "024": { name: "Confidence",      school: "EUI",         status: "active" },
   "025": { name: "Fredrick",        school: "EUI",         status: "active" },
   "026": { name: "Esosa",           school: "PG",          status: "active" },
-  "027": { name: "David English",   school: "EUI",         status: "active" },
+  "027": { name: "David Scholar",   school: "EUI",         status: "active" },
   "028": { name: "Chibuzor",        school: "EUI",         status: "active" },
   "029": { name: "Queen Precious",  school: "EUI",         status: "active" },
   "030": { name: "Cynthia",         school: "EUI",         status: "active" },
@@ -44,17 +44,17 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "034": { name: "Doreen",          school: "EUI",         status: "active" },
   "035": { name: "David Salam",     school: "EUI",         status: "active" },
   "036": { name: "Ayomide Bridget", school: "EUI",         status: "active" },
-  "037": { name: "Ifekristi",          school: "UNILAG",      status: "active" },
-  "038": { name: "Victory Teshua",  school: "EUI",         status: "active" },
+  "037": { name: "Jekrjk",          school: "UNILAG",      status: "active" },
+  "038": { name: "Victory Teshya",  school: "EUI",         status: "active" },
   "039": { name: "Collins",         school: "EUI",         status: "active" },
-  "040": { name: "Favy",   school: "EUI",         status: "active" },
+  "040": { name: "Favour (Favo)",   school: "EUI",         status: "active" },
   "041": { name: "Deborah",         school: "EUI",         status: "active" },
   "042": { name: "Aisosa",          school: "EUI",         status: "active" },
   "043": { name: "Engine Boy",      school: "UNIBEN",      status: "active" },
   "044": { name: "Adenike",         school: "UNIBEN",      status: "active" },
   "045": { name: "Precious",        school: "",            status: "active" },
   "046": { name: "Ayo (Bridget)",   school: "EUI",         status: "active" },
-  "047": { name: "Raqeeb", school: "EUI",         status: "active" },
+  "047": { name: "Raqeeb (Zenith)", school: "EUI",         status: "active" },
   "048": { name: "Michael",         school: "EUI",         status: "active" },
   "049": { name: "",                school: "EUI",         status: "vacant"  },
   "050": { name: "Joshua (COE)",    school: "EUI",         status: "active" },
@@ -126,10 +126,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   // ── ECSA (Sub-Ambassador client referral link) ─────────────────────────────
+  // URL format: /ECSA/-001-001  →  id = "-001-001"
+  // Internal key format: "ECSA-001-001" — prepend "ECSA" to resolve
   if (type === "ecsa") {
-    const sub = SUB[id];
-    if (!sub) { res.status(404).send(errPage("❌ Not Found", "This Sub-Ambassador link does not exist.")); return; }
-    void trackClick(id);
+    const fullId = id.startsWith("ECSA") ? id : `ECSA${id}`;
+    const sub = SUB[fullId];
+    if (!sub) { res.status(404).send(errPage("Not Found", "This Sub-Ambassador link does not exist.")); return; }
+    void trackClick(fullId);
     const via = CORE[sub.coreId] ? ` (via ${CORE[sub.coreId].name})` : "";
     res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was referred by ${sub.name}${via}. I'd like to place an order on the following Services:`)}`);
     return;

@@ -53,7 +53,7 @@ const ambassadors: AmbassadorData = {
     "014": { name: "Sultan",          school: "EUI",         status: "active" },
     "015": { name: "Taiwo",           school: "EUI",         status: "active" },
     "016": { name: "Aisosa (MLS)",    school: "EUI",         status: "active" },
-    "017": { name: "JVS",             school: "EUI",         status: "active" },
+    "017": { name: "JVS",             school: "BRAND",         status: "active" },
     "018": { name: "Dr Abel",         school: "EUI",         status: "active" },
     "019": { name: "",                school: "EUI",         status: "vacant"  },
     "020": { name: "",                school: "EUI",         status: "vacant"  },
