@@ -118,7 +118,8 @@ export default function AdminDashboard(){
   const[stats,setStats]=useState<Record<string,Stat>>({});
   const[sLoad,setSLoad]=useState(false);const[sErr,setSErr]=useState("");
   const[secret,setSecretRaw]=useState<string>(()=>lsGet(LS_S)??"");
-  const setSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
+  const setAdminSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
+  const[tempSecret,setTempSecret]=useState("");
   const[settOpen,setSettOpen]=useState(false);
   const[tSearch,setTSearch]=useState("");
 
@@ -588,8 +589,18 @@ export default function AdminDashboard(){
                   Enter your admin secret to enable Approve, Reject, Log Order, and Broadcast on this device. This must be set on every device you use.
                 </p>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap" as const}}>
-                  <input style={{...s.fInp,maxWidth:220,padding:"8px 12px"}} type="password" placeholder="Enter admin secret…" onBlur={e=>{if(e.target.value)setAdminSecret(e.target.value);}} onKeyDown={e=>{if(e.key==="Enter"&&(e.target as HTMLInputElement).value)setAdminSecret((e.target as HTMLInputElement).value);}}/>
-                  <button style={{...s.actBtn,background:C.greenDark,color:C.yellow,padding:"8px 16px",fontSize:"0.82rem"}} onClick={e=>{const inp=(e.currentTarget.previousElementSibling as HTMLInputElement);if(inp?.value){setAdminSecret(inp.value);}}}>Save Secret</button>
+                  <input
+                    style={{...s.fInp,maxWidth:220,padding:"8px 12px"}}
+                    type="password"
+                    placeholder="Enter admin secret…"
+                    value={tempSecret}
+                    onChange={e=>setTempSecret(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter"&&tempSecret){setAdminSecret(tempSecret);setTempSecret("");}}}
+                  />
+                  <button
+                    style={{...s.actBtn,background:C.greenDark,color:C.yellow,padding:"8px 16px",fontSize:"0.82rem"}}
+                    onClick={()=>{if(tempSecret){setAdminSecret(tempSecret);setTempSecret("");}}}
+                  >Save Secret</button>
                 </div>
               </div>
             </div>
@@ -601,7 +612,7 @@ export default function AdminDashboard(){
               <div style={{padding:"20px 18px"}}>
                 <div style={{marginBottom:12}}>
                   <label style={s.fLabel}>Admin Secret</label>
-                  <input style={s.fInp} type="password" placeholder="Must match ADMIN_SECRET in Vercel" value={secret} onChange={e=>setSecret(e.target.value)}/>
+                  <input style={s.fInp} type="password" placeholder="Must match ADMIN_SECRET in Vercel" value={secret} onChange={e=>setAdminSecret(e.target.value)}/>
                 </div>
                 <div style={{background:C.milk,borderRadius:8,padding:"12px 14px",fontSize:"0.8rem",color:C.greenDark,lineHeight:2,marginBottom:12}}>
                   <strong>Required Vercel env vars:</strong><br/>
@@ -896,7 +907,16 @@ export default function AdminDashboard(){
                   <input style={{...s.fInp,flex:1}} value={nsCoreId} onChange={e=>{setNsCoreId(e.target.value);setNsId(e.target.value.trim()?nextEcsaId(e.target.value.trim().toUpperCase().startsWith("ECCA-")?e.target.value.trim().toUpperCase():`ECCA-${e.target.value.trim().toUpperCase()}`):"");}} placeholder="e.g. 001 or ECCA-001"/>
                 </div>
                 <p style={{fontSize:"0.72rem",color:"#888",marginTop:4}}>
-                  {nsCoreId.trim()&&(()=>{const cid=nsCoreId.trim().toUpperCase().startsWith("ECCA-")?nsCoreId.trim().toUpperCase():`ECCA-${nsCoreId.trim().toUpperCase()}`;const core=data.coreAmbassadors.find(c=>c.id===cid);return core?<span style={{color:C.green}}>Found: {core.name}</span>:<span style={{color:C.red}}>Not found — check the Core (ECCA) tab</span>;})()}
+                  {(()=>{
+                    if(!nsCoreId.trim()) return null;
+                    const cid=nsCoreId.trim().toUpperCase().startsWith("ECCA-")
+                      ?nsCoreId.trim().toUpperCase()
+                      :`ECCA-${nsCoreId.trim().toUpperCase()}`;
+                    const found=data.coreAmbassadors.find(c=>c.id===cid);
+                    return found
+                      ?<span style={{color:C.green}}>Found: {found.name}</span>
+                      :<span style={{color:C.red}}>Not found — check the Core (ECCA) tab</span>;
+                  })()}
                 </p>
               </div>
               <div>
