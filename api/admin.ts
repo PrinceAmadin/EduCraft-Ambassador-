@@ -332,14 +332,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
       // ── GET NEXT SLOT ───────────────────────────────────────────────────────
       case "get-next-slot": {
+        // existingSlots is passed from the frontend: [{id:"001",status:"active"|"vacant"}, ...]
+        // Strategy:
+        //   1. Find vacant slots not already taken by pending/approved/applications
+        //   2. If none vacant, use next number after the highest existing slot
+        const rawBody = (req.method === "POST") ? body : {};
+        const existingSlots: { id: string; status: string }[] = Array.isArray(rawBody.existingSlots)
+          ? rawBody.existingSlots
+          : [];
+
         const client = await redisClient();
-        const counterStr = await client.get("slot_counter");
-        let next = counterStr ? parseInt(counterStr,10)+1 : 1;
-        const [approved,pending2,apps] = await Promise.all([client.sMembers("approved_ids"),client.sMembers("pending_ids"),client.sMembers("application_ids")]);
+        const [approved, pending2, apps] = await Promise.all([
+          client.sMembers("approved_ids"),
+          client.sMembers("pending_ids"),
+          client.sMembers("application_ids"),
+        ]);
         await client.disconnect();
-        const allNums = new Set([...approved,...pending2,...apps].map(id=>parseInt(id,10)).filter(n=>!isNaN(n)&&n>0));
-        while (allNums.has(next)) next++;
-        res.status(200).json({ slotId:String(next).padStart(3,"0"), nextNumber:next });
+
+        // All IDs already taken in the tracking system
+        const taken = new Set([...approved, ...pending2, ...apps].map(id => id.padStart(3, "0")));
+
+        // Step 1: Find a vacant slot from the existing ambassador list that isn't taken
+        const vacantSlots = existingSlots
+          .filter(s => s.status === "vacant" && !taken.has(s.id.padStart(3, "0")))
+          .sort((a, b) => parseInt(a.id) - parseInt(b.id));
+
+        if (vacantSlots.length > 0) {
+          const slotId = vacantSlots[0].id.padStart(3, "0");
+          res.status(200).json({ slotId, nextNumber: parseInt(slotId, 10), fromVacant: true });
+          break;
+        }
+
+        // Step 2: No vacant slots — find next number after the highest existing slot
+        const allExistingNums = existingSlots.map(s => parseInt(s.id, 10)).filter(n => !isNaN(n) && n > 0);
+        const takenNums = new Set([...taken].map(id => parseInt(id, 10)).filter(n => !isNaN(n)));
+
+        let next = allExistingNums.length > 0 ? Math.max(...allExistingNums) + 1 : 1;
+        // Skip any already taken
+        while (takenNums.has(next)) next++;
+
+        res.status(200).json({ slotId: String(next).padStart(3, "0"), nextNumber: next, fromVacant: false });
         break;
       }
 

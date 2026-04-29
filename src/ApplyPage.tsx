@@ -1,6 +1,7 @@
 // src/ApplyPage.tsx — Public ambassador application form
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import ambassadors from "./ambassadors";
 
 const C = {
   yellow:"#fbdb21", yellowDark:"#E0B846",
@@ -75,7 +76,16 @@ export default function ApplyPage() {
   });
 
   useEffect(() => {
-    fetch("/api/admin?action=get-next-slot")
+    // Pass all existing slots so the backend can find the right vacant slot
+    const existingSlots = Object.entries(ambassadors.slots).map(([id, slot]) => ({
+      id: id.padStart(3, "0"),
+      status: slot.status,
+    }));
+    fetch("/api/admin?action=get-next-slot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ existingSlots }),
+    })
       .then(r => r.json())
       .then(d => { if (d.slotId) setForm(p => ({ ...p, slotId: d.slotId })); })
       .catch(() => {});
@@ -145,11 +155,11 @@ export default function ApplyPage() {
           </h2>
           <p style={{ color: "#555", lineHeight: 1.7, fontSize: "0.92rem", marginBottom: 20 }}>
             Your application for <strong>Slot EduCraftA-{form.slotId}</strong> has been received.
-            The EduCraft admin team will review your details and respond within 24 hours.
+            The EduCraft admin team will review your details and respond within 24–48 hours.
           </p>
           <div style={{ background: C.milk, borderRadius: 8, padding: "16px 18px", fontSize: "0.84rem", color: C.greenDark, lineHeight: 1.9, textAlign: "left" as const }}>
             <strong>What happens next:</strong><br/>
-            1. Admin reviews your application (within 24 hours)<br/>
+            1. Admin reviews your application (within 24–48 hours)<br/>
             2. If approved — you receive a welcome email with your referral link<br/>
             3. If rejected — you will be notified with the reason
           </div>
@@ -304,9 +314,11 @@ export default function ApplyPage() {
 
 // ── Small components ─────────────────────────────────────────────────────────
 function BankSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [query,     setQuery]     = useState("");
-  const [open,      setOpen]      = useState(false);
+  const [query,      setQuery]      = useState("");
+  const [open,       setOpen]       = useState(false);
   const [showCustom, setShowCustom] = useState(false);
+  const [customVal,  setCustomVal]  = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const filtered = query.length > 0
     ? NIGERIAN_BANKS.filter(b => b.toLowerCase().includes(query.toLowerCase()))
@@ -317,22 +329,35 @@ function BankSelect({ value, onChange }: { value: string; onChange: (v: string) 
     setOpen(false);
     setQuery("");
     setShowCustom(false);
+    setCustomVal("");
+  };
+
+  // Close only when focus leaves the entire container
+  const handleContainerBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!containerRef.current?.contains(e.relatedTarget as Node)) {
+      setOpen(false);
+    }
   };
 
   return (
-    <div style={{ position: "relative" as const }}>
+    <div
+      ref={containerRef}
+      style={{ position: "relative" as const }}
+      onBlur={handleContainerBlur}
+    >
       <label style={lbl}>Bank Name *</label>
       <div style={{ position: "relative" as const }}>
         <input
-          style={{ ...inp, cursor: "pointer" }}
+          style={{ ...inp, cursor: "pointer", paddingRight: 32 }}
           placeholder="Search or select your bank…"
           value={open ? query : value}
-          onFocus={() => { setOpen(true); setQuery(""); }}
-          onChange={e => { setQuery(e.target.value); setOpen(true); }}
-          onBlur={() => setTimeout(() => setOpen(false), 200)}
+          onFocus={() => { setOpen(true); setQuery(""); setShowCustom(false); }}
+          onChange={e => { setQuery(e.target.value); setOpen(true); setShowCustom(false); }}
           autoComplete="off"
         />
-        <span style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:"#aaa", fontSize:"0.8rem", pointerEvents:"none" }}>
+        <span
+          style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:"#aaa", fontSize:"0.8rem", cursor:"pointer" }}
+          onMouseDown={e => { e.preventDefault(); setOpen(o => !o); if (!open) setQuery(""); }}>
           {open ? "▲" : "▼"}
         </span>
       </div>
@@ -341,45 +366,67 @@ function BankSelect({ value, onChange }: { value: string; onChange: (v: string) 
         <div style={{
           position:"absolute" as const, zIndex:1000, top:"calc(100% + 4px)", left:0, right:0,
           background:"#fff", border:"1.5px solid #E0B846", borderRadius:8,
-          boxShadow:"0 8px 24px rgba(0,0,0,.12)", maxHeight:220, overflowY:"auto" as const,
+          boxShadow:"0 8px 24px rgba(0,0,0,.12)", maxHeight:240, overflowY:"auto" as const,
         }}>
-          {filtered.length === 0 && (
-            <div style={{ padding:"12px 14px", color:"#aaa", fontSize:"0.85rem" }}>
-              No bank found.
-              {!showCustom && (
-                <button
-                  style={{ marginLeft:8, background:"none", border:"none", color:"#12827c", cursor:"pointer", fontWeight:700, fontSize:"0.85rem", textDecoration:"underline" }}
-                  onMouseDown={e => { e.preventDefault(); setShowCustom(true); }}>
-                  Type bank name manually
-                </button>
-              )}
-            </div>
-          )}
-          {showCustom && (
-            <div style={{ padding:"10px 14px", borderBottom:"1px solid #f0f0f0" }}>
+          {/* Custom bank entry section */}
+          {showCustom ? (
+            <div style={{ padding:"12px 14px", borderBottom:"1px solid #f0f0f0", background:"#fafafa" }}>
+              <div style={{ fontSize:"0.76rem", color:"#888", marginBottom:6 }}>Enter your bank name:</div>
               <input
-                style={{ ...inp, fontSize:"0.85rem", padding:"7px 10px" }}
-                placeholder="Type your bank name…"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && query.trim()) selectBank(query.trim()); }}
+                style={{ ...inp, fontSize:"0.85rem", padding:"8px 10px" }}
+                placeholder="Type your bank name here…"
+                value={customVal}
+                onChange={e => setCustomVal(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && customVal.trim()) selectBank(customVal.trim()); }}
                 autoFocus
               />
-              <button
-                style={{ marginTop:6, background:"#12827c", color:"#fff", border:"none", borderRadius:6, padding:"6px 14px", fontSize:"0.82rem", cursor:"pointer", fontWeight:700 }}
-                onMouseDown={e => { e.preventDefault(); if (query.trim()) selectBank(query.trim()); }}>
-                Use "{query}"
-              </button>
+              <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                <button
+                  style={{ background:"#12827c", color:"#fff", border:"none", borderRadius:6, padding:"7px 14px", fontSize:"0.82rem", cursor:"pointer", fontWeight:700 }}
+                  onClick={() => { if (customVal.trim()) selectBank(customVal.trim()); }}>
+                  Confirm "{customVal || "…"}"
+                </button>
+                <button
+                  style={{ background:"none", border:"1px solid #ddd", borderRadius:6, padding:"7px 12px", fontSize:"0.82rem", cursor:"pointer", color:"#888" }}
+                  onClick={() => setShowCustom(false)}>
+                  Back to list
+                </button>
+              </div>
             </div>
+          ) : (
+            <>
+              {filtered.length === 0 && (
+                <div style={{ padding:"12px 14px", color:"#aaa", fontSize:"0.85rem", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" as const, gap:8 }}>
+                  <span>No bank found for "{query}"</span>
+                  <button
+                    style={{ background:"#12827c", color:"#fff", border:"none", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontWeight:700, fontSize:"0.8rem" }}
+                    onClick={() => { setShowCustom(true); setCustomVal(query); }}>
+                    Enter manually
+                  </button>
+                </div>
+              )}
+              {filtered.length > 0 && (
+                <div style={{ padding:"8px 14px 6px", borderBottom:"1px solid #f5f5f5" }}>
+                  <button
+                    style={{ background:"none", border:"none", color:"#12827c", cursor:"pointer", fontSize:"0.78rem", fontWeight:600, padding:0, textDecoration:"underline" }}
+                    onClick={() => { setShowCustom(true); setCustomVal(query); }}>
+                    My bank is not in this list
+                  </button>
+                </div>
+              )}
+              {filtered.map(b => (
+                <div
+                  key={b}
+                  tabIndex={0}
+                  role="option"
+                  style={{ padding:"10px 14px", cursor:"pointer", fontSize:"0.88rem", color:"#0D5753", background:b===value?"#FFF9ED":"transparent", fontWeight:b===value?700:400 }}
+                  onClick={() => selectBank(b)}
+                  onKeyDown={e => { if (e.key === "Enter") selectBank(b); }}>
+                  {b}
+                </div>
+              ))}
+            </>
           )}
-          {filtered.map(b => (
-            <div
-              key={b}
-              style={{ padding:"10px 14px", cursor:"pointer", fontSize:"0.88rem", color:"#0D5753", background: b===value?"#FFF9ED":"transparent", fontWeight:b===value?700:400 }}
-              onMouseDown={e => { e.preventDefault(); selectBank(b); }}>
-              {b}
-            </div>
-          ))}
         </div>
       )}
     </div>

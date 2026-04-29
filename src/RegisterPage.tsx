@@ -36,7 +36,7 @@ export default function RegisterPage() {
         </p>
         <div style={{ background:C.milk, borderRadius:8, padding:"14px 18px", fontSize:"0.83rem", color:C.greenDark, lineHeight:1.9, textAlign:"left" as const }}>
           <strong>What happens next:</strong><br/>
-          1. Admin reviews your details (within 24 hours)<br/>
+          1. Admin reviews your details (within 24–48 hours)<br/>
           2. If approved — you receive a confirmation email with your link<br/>
           3. If not verified — you will be notified with the reason
         </div>
