@@ -3,17 +3,24 @@
     { "source": "/EduCraftA/:id", "destination": "/api/redirect?id=:id&type=ambassador" },
     { "source": "/ECCA/:id",      "destination": "/api/redirect?id=:id&type=ecca" },
     { "source": "/ECSA/:id",      "destination": "/api/redirect?id=:id&type=ecsa" },
-    { "source": "/register",      "destination": "/" }
+    { "source": "/register",      "destination": "/" },
+    { "source": "/apply",         "destination": "/" }
   ],
   "functions": {
-    "api/register.ts":    { "maxDuration": 30 },
-    "api/approve.ts":     { "maxDuration": 30 },
-    "api/track-order.ts": { "maxDuration": 30 },
-    "api/broadcast.ts":   { "maxDuration": 30 },
-    "api/stats.ts":       { "maxDuration": 30 },
-    "api/pending.ts":     { "maxDuration": 30 },
-    "api/edit-pending.ts":{ "maxDuration": 30 },
-    "api/reset-slot.ts":  { "maxDuration": 30 }
+    "api/register.ts":             { "maxDuration": 30 },
+    "api/apply.ts":                { "maxDuration": 30 },
+    "api/approve.ts":              { "maxDuration": 30 },
+    "api/approve-application.ts":  { "maxDuration": 30 },
+    "api/reject-application.ts":   { "maxDuration": 30 },
+    "api/track-order.ts":          { "maxDuration": 30 },
+    "api/broadcast.ts":            { "maxDuration": 30 },
+    "api/message-ambassador.ts":   { "maxDuration": 30 },
+    "api/stats.ts":                { "maxDuration": 30 },
+    "api/pending.ts":              { "maxDuration": 30 },
+    "api/applications.ts":         { "maxDuration": 30 },
+    "api/edit-pending.ts":         { "maxDuration": 30 },
+    "api/reset-slot.ts":           { "maxDuration": 30 },
+    "api/test-email.ts":           { "maxDuration": 30 }
   },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
