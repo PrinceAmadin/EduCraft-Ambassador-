@@ -239,7 +239,7 @@ export default function AdminDashboard(){
   const loadApplications=async()=>{
     setAppsLoading(true);
     try{
-      const qs=secret?`?secret=${encodeURIComponent(secret)}`:"";
+      const qs=secret?`&secret=${encodeURIComponent(secret)}`:"";
       const r=await fetch(`/api/admin?action=applications${qs}`);
       if(r.ok)setApplications(await r.json());
     }catch{/**/}
@@ -290,7 +290,7 @@ export default function AdminDashboard(){
   const loadStats=async()=>{
     setSLoad(true);setSErr("");
     try{
-      const qs=secret?`?secret=${encodeURIComponent(secret)}`:"";
+      const qs=secret?`&secret=${encodeURIComponent(secret)}`:"";
       const r=await fetch(`/api/admin?action=stats${qs}`);
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed to load stats.");
@@ -302,7 +302,7 @@ export default function AdminDashboard(){
   const loadPending=async()=>{
     setPLoad(true);
     try{
-      const qs=secret?`?secret=${encodeURIComponent(secret)}`:"";
+      const qs=secret?`&secret=${encodeURIComponent(secret)}`:"";
       const r=await fetch(`/api/admin?action=pending${qs}`);
       if(r.ok)setPending(await r.json());
     }catch{/**/}

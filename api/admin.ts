@@ -62,11 +62,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const body   = (req.body ?? {}) as Record<string, string>;
   const secret = (req.query.secret as string | undefined) ?? body.adminSecret ?? "";
 
-  // Auth check for all actions (skip for none — all are admin-only)
-  const expected = process.env.ADMIN_SECRET ?? "";
-  if (expected && secret !== expected) {
-    res.status(401).json({ error: "Unauthorized. Check your Admin Secret." });
-    return;
+  // Public actions — no auth required
+  const PUBLIC_ACTIONS = ["get-next-slot"];
+  if (!PUBLIC_ACTIONS.includes(action)) {
+    const expected = process.env.ADMIN_SECRET ?? "";
+    if (expected && secret !== expected) {
+      res.status(401).json({ error: "Unauthorized. Check your Admin Secret." });
+      return;
+    }
   }
 
   if (!process.env.REDIS_URL && action !== "test-email" && action !== "check-env") {

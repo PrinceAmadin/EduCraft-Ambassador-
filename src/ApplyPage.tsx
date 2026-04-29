@@ -26,14 +26,43 @@ interface FormData {
 }
 
 const NIGERIAN_BANKS = [
-  "Access Bank","Citibank Nigeria","Ecobank Nigeria","Fidelity Bank",
-  "First Bank of Nigeria","First City Monument Bank (FCMB)","Globus Bank",
-  "Guaranty Trust Bank (GTBank)","Heritage Bank","Jaiz Bank","Keystone Bank",
-  "Kuda Bank","Opay","PalmPay","Polaris Bank","Providus Bank","Stanbic IBTC Bank",
-  "Standard Chartered Bank","Sterling Bank","SunTrust Bank","Union Bank of Nigeria",
-  "United Bank for Africa (UBA)","Unity Bank","VFD Microfinance Bank",
-  "Wema Bank","Zenith Bank","Moniepoint MFB","Rubies MFB",
-];
+  "Access Bank",
+  "Citibank Nigeria",
+  "Coronation Merchant Bank",
+  "Ecobank Nigeria",
+  "FBNQuest Merchant Bank",
+  "Fidelity Bank",
+  "First Bank of Nigeria",
+  "First City Monument Bank (FCMB)",
+  "Globus Bank",
+  "Greenwich Merchant Bank",
+  "Guaranty Trust Bank (GTBank)",
+  "Jaiz Bank",
+  "Keystone Bank",
+  "Kuda Bank",
+  "Moniepoint Microfinance Bank",
+  "Nova Merchant Bank",
+  "Opay",
+  "PalmPay",
+  "Parallex Bank",
+  "Polaris Bank",
+  "PremiumTrust Bank",
+  "Providus Bank",
+  "Rand Merchant Bank",
+  "Rubies Microfinance Bank",
+  "Stanbic IBTC Bank",
+  "Standard Chartered Bank Nigeria",
+  "Sterling Bank",
+  "SunTrust Bank Nigeria",
+  "TAJ Bank",
+  "Titan Trust Bank",
+  "Union Bank of Nigeria",
+  "United Bank for Africa (UBA)",
+  "Unity Bank",
+  "VFD Microfinance Bank",
+  "Wema Bank",
+  "Zenith Bank",
+].sort();
 
 export default function ApplyPage() {
   const [step,   setStep]   = useState<Step>(1);
@@ -183,13 +212,7 @@ export default function ApplyPage() {
             <div style={{ background: C.milk, border: `1px solid ${C.milkDark}`, borderLeft: `3px solid ${C.yellowDark}`, borderRadius: 4, padding: "12px 16px", fontSize: "0.84rem", color: C.greenDark, lineHeight: 1.7 }}>
               <strong>Important:</strong> These details will be used to pay your commission. Ensure they are accurate and match your bank records exactly.
             </div>
-            <div>
-              <label style={lbl}>Bank Name *</label>
-              <select style={inp} value={form.bankName} onChange={set("bankName")}>
-                <option value="">— Select your bank —</option>
-                {NIGERIAN_BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
+            <BankSelect value={form.bankName} onChange={v=>setForm(p=>({...p,bankName:v}))}/>
             <Field label="Account Number *" placeholder="10-digit account number" value={form.accountNumber} onChange={set("accountNumber")} maxLength={10}/>
             <Field label="Account Name *" placeholder="Exact name on your bank account" value={form.accountName} onChange={set("accountName")} hint="Must match your bank records exactly"/>
           </div>
@@ -280,6 +303,89 @@ export default function ApplyPage() {
 }
 
 // ── Small components ─────────────────────────────────────────────────────────
+function BankSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [query,     setQuery]     = useState("");
+  const [open,      setOpen]      = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
+
+  const filtered = query.length > 0
+    ? NIGERIAN_BANKS.filter(b => b.toLowerCase().includes(query.toLowerCase()))
+    : NIGERIAN_BANKS;
+
+  const selectBank = (bank: string) => {
+    onChange(bank);
+    setOpen(false);
+    setQuery("");
+    setShowCustom(false);
+  };
+
+  return (
+    <div style={{ position: "relative" as const }}>
+      <label style={lbl}>Bank Name *</label>
+      <div style={{ position: "relative" as const }}>
+        <input
+          style={{ ...inp, cursor: "pointer" }}
+          placeholder="Search or select your bank…"
+          value={open ? query : value}
+          onFocus={() => { setOpen(true); setQuery(""); }}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onBlur={() => setTimeout(() => setOpen(false), 200)}
+          autoComplete="off"
+        />
+        <span style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:"#aaa", fontSize:"0.8rem", pointerEvents:"none" }}>
+          {open ? "▲" : "▼"}
+        </span>
+      </div>
+
+      {open && (
+        <div style={{
+          position:"absolute" as const, zIndex:1000, top:"calc(100% + 4px)", left:0, right:0,
+          background:"#fff", border:"1.5px solid #E0B846", borderRadius:8,
+          boxShadow:"0 8px 24px rgba(0,0,0,.12)", maxHeight:220, overflowY:"auto" as const,
+        }}>
+          {filtered.length === 0 && (
+            <div style={{ padding:"12px 14px", color:"#aaa", fontSize:"0.85rem" }}>
+              No bank found.
+              {!showCustom && (
+                <button
+                  style={{ marginLeft:8, background:"none", border:"none", color:"#12827c", cursor:"pointer", fontWeight:700, fontSize:"0.85rem", textDecoration:"underline" }}
+                  onMouseDown={e => { e.preventDefault(); setShowCustom(true); }}>
+                  Type bank name manually
+                </button>
+              )}
+            </div>
+          )}
+          {showCustom && (
+            <div style={{ padding:"10px 14px", borderBottom:"1px solid #f0f0f0" }}>
+              <input
+                style={{ ...inp, fontSize:"0.85rem", padding:"7px 10px" }}
+                placeholder="Type your bank name…"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && query.trim()) selectBank(query.trim()); }}
+                autoFocus
+              />
+              <button
+                style={{ marginTop:6, background:"#12827c", color:"#fff", border:"none", borderRadius:6, padding:"6px 14px", fontSize:"0.82rem", cursor:"pointer", fontWeight:700 }}
+                onMouseDown={e => { e.preventDefault(); if (query.trim()) selectBank(query.trim()); }}>
+                Use "{query}"
+              </button>
+            </div>
+          )}
+          {filtered.map(b => (
+            <div
+              key={b}
+              style={{ padding:"10px 14px", cursor:"pointer", fontSize:"0.88rem", color:"#0D5753", background: b===value?"#FFF9ED":"transparent", fontWeight:b===value?700:400 }}
+              onMouseDown={e => { e.preventDefault(); selectBank(b); }}>
+              {b}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Field({ label, placeholder, value, onChange, hint, type="text", maxLength }: {
   label: string; placeholder: string; value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
