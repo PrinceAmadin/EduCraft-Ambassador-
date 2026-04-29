@@ -46,7 +46,7 @@ export default function ApplyPage() {
   });
 
   useEffect(() => {
-    fetch("/api/get-next-slot")
+    fetch("/api/admin?action=get-next-slot")
       .then(r => r.json())
       .then(d => { if (d.slotId) setForm(p => ({ ...p, slotId: d.slotId })); })
       .catch(() => {});

@@ -240,7 +240,7 @@ export default function AdminDashboard(){
     setAppsLoading(true);
     try{
       const qs=secret?`?secret=${encodeURIComponent(secret)}`:"";
-      const r=await fetch(`/api/applications${qs}`);
+      const r=await fetch(`/api/admin?action=applications${qs}`);
       if(r.ok)setApplications(await r.json());
     }catch{/**/}
     finally{setAppsLoading(false);}
@@ -251,7 +251,7 @@ export default function AdminDashboard(){
     const app=applications.find(a=>a.slotId===slotId);
     if(!app)return;
     try{
-      const r=await fetch("/api/approve-application",{method:"POST",headers:{"Content-Type":"application/json"},
+      const r=await fetch("/api/admin?action=approve-application",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({slotId,adminSecret:secret,baseUrl:base,
           fullName:editAppId===slotId?eaFullName:app.fullName,
           universityAbbr:editAppId===slotId?eaUniAbbr:app.universityAbbr,
@@ -277,7 +277,7 @@ export default function AdminDashboard(){
   const rejectApplicationFn=async(slotId:string)=>{
     setAppActMsg("");
     try{
-      const r=await fetch("/api/reject-application",{method:"POST",headers:{"Content-Type":"application/json"},
+      const r=await fetch("/api/admin?action=reject-application",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({slotId,reason:rejectAppReason,adminSecret:secret})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed");
@@ -291,7 +291,7 @@ export default function AdminDashboard(){
     setSLoad(true);setSErr("");
     try{
       const qs=secret?`?secret=${encodeURIComponent(secret)}`:"";
-      const r=await fetch(`/api/stats${qs}`);
+      const r=await fetch(`/api/admin?action=stats${qs}`);
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed to load stats.");
       setStats(d);
@@ -303,7 +303,7 @@ export default function AdminDashboard(){
     setPLoad(true);
     try{
       const qs=secret?`?secret=${encodeURIComponent(secret)}`:"";
-      const r=await fetch(`/api/pending${qs}`);
+      const r=await fetch(`/api/admin?action=pending${qs}`);
       if(r.ok)setPending(await r.json());
     }catch{/**/}
     finally{setPLoad(false);}
@@ -322,7 +322,7 @@ export default function AdminDashboard(){
     if(!epEmail.trim()) {setEpMsg("Email is required.");setEpSt("fail");return;}
     setEpSt("busy");setEpMsg("");
     try{
-      const r=await fetch("/api/edit-pending",{method:"POST",headers:{"Content-Type":"application/json"},
+      const r=await fetch("/api/admin?action=edit-pending",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({originalSlotId:editPendingId,slotId:epSlotId,name:epName,school:epSchool,email:epEmail,changeReason:epReason,adminSecret:secret})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed to update.");
@@ -339,7 +339,7 @@ export default function AdminDashboard(){
   const approve=async(slotId:string)=>{
     setAppMsg("");
     try{
-      const r=await fetch("/api/approve",{method:"POST",headers:{"Content-Type":"application/json"},
+      const r=await fetch("/api/admin?action=approve",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({slotId,action:"approve",adminSecret:secret,baseUrl:base})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed");
@@ -352,7 +352,7 @@ export default function AdminDashboard(){
   const reject=async(slotId:string)=>{
     setAppMsg("");
     try{
-      const r=await fetch("/api/approve",{method:"POST",headers:{"Content-Type":"application/json"},
+      const r=await fetch("/api/admin?action=approve",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({slotId,action:"reject",adminSecret:secret,reason:rejReason})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed");
@@ -371,7 +371,7 @@ export default function AdminDashboard(){
     if(!msgBody.trim()){setMsgErr("Message is required.");return;}
     setMsgSt("busy");setMsgErr("");
     try{
-      const r=await fetch("/api/message-ambassador",{method:"POST",headers:{"Content-Type":"application/json"},
+      const r=await fetch("/api/admin?action=message-ambassador",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({slotId:msgId,title:msgTitle,message:msgBody,adminSecret:secret})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed to send.");
@@ -384,7 +384,7 @@ export default function AdminDashboard(){
     if(!logId)return;
     setLogSt("busy");
     try{
-      const r=await fetch("/api/track-order",{method:"POST",headers:{"Content-Type":"application/json"},
+      const r=await fetch("/api/admin?action=track-order",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({slotId:logId,jobDesc:logDesc,jobAmount:logAmt,commissionPercent:logPct,adminSecret:secret})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed");
@@ -406,7 +406,7 @@ export default function AdminDashboard(){
   const resetSlot=async(slotId:string)=>{
     setResetSt("busy");setResetMsg("");
     try{
-      const r=await fetch("/api/reset-slot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slotId,adminSecret:secret})});
+      const r=await fetch("/api/admin?action=reset-slot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slotId,adminSecret:secret})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed");
       setResetSt("ok");setResetMsg(`Slot ${slotId} registration cleared. The new ambassador can now register.`);
@@ -420,7 +420,7 @@ export default function AdminDashboard(){
     if(!bcMessage.trim()){setBcMsg("Message is required.");setBcSt("fail");return;}
     setBcSt("busy");setBcMsg("");
     try{
-      const r=await fetch("/api/broadcast",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:bcSubject,message:bcMessage,adminSecret:secret})});
+      const r=await fetch("/api/admin?action=broadcast",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:bcSubject,message:bcMessage,adminSecret:secret})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed");
       setBcSt("ok");setBcMsg(`Sent to ${d.sent} ambassador${d.sent!==1?"s":""}.${d.failed>0?` ${d.failed} failed.`:""}`);
@@ -1592,7 +1592,7 @@ function TestEmailButton({secret,C:CC,s:ss}:{secret:string;C:Record<string,strin
   const test=async()=>{
     setSt("busy");setMsg("");
     try{
-      const r=await fetch("/api/test-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({adminSecret:secret})});
+      const r=await fetch("/api/admin?action=test-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({adminSecret:secret})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Failed");
       setSt("ok");setMsg(`OK · env: ${d.env}`);
