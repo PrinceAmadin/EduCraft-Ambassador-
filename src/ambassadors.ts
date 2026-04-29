@@ -1,19 +1,16 @@
 // src/ambassadors.ts
-// ✏️ THE FILE YOU EDIT to manage all ambassador data
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 export interface AmbassadorSlot {
   name: string;
   school: string;
   status: "active" | "vacant";
 }
 
-
 export interface CoreAmbassador {
-  id: string;       // unique ID used to link sub-ambassadors
+  id: string;
   name: string;
   school: string;
   percentage: number;
+  status?: "active" | "vacant"; // optional for backward compatibility
 }
 
 export interface SubAmbassador {
@@ -21,7 +18,8 @@ export interface SubAmbassador {
   name: string;
   school: string;
   percentage: number;
-  coreId: string;   // must match a CoreAmbassador id above
+  coreId: string;
+  status?: "active" | "vacant"; // optional for backward compatibility
 }
 
 export interface AmbassadorData {
@@ -31,11 +29,9 @@ export interface AmbassadorData {
   subAmbassadors: SubAmbassador[];
 }
 
-// ── Data ──────────────────────────────────────────────────────────────────────
 const ambassadors: AmbassadorData = {
   educraft_whatsapp: "2347063421088",
 
-  // ── General Ambassador Slots (redirect system) ─────────────────────────────
   slots: {
     "001": { name: "Admins",          school: "Admin", status: "active" },
     "002": { name: "Noruwosa Zoe",    school: "UNIBEN",      status: "active" },
@@ -99,8 +95,6 @@ const ambassadors: AmbassadorData = {
     "060": { name: "",                school: "EUI",         status: "vacant"  },
   },
 
-  // ── Core Ambassadors (ECCA) ────────────────────────────────────────────────
-  // These are senior partners. Each earns their base % + 3% per sub they have.
   coreAmbassadors: [
     { id: "ECCA-001", name: "Chidinma Victory", school: "EUI",   percentage: 10 },
     { id: "ECCA-002", name: "Debby",            school: "EUI",   percentage: 10 },
@@ -109,8 +103,6 @@ const ambassadors: AmbassadorData = {
     { id: "ECCA-005", name: "Yole",          school: "EUI", percentage: 10 },
   ],
 
-  // ── Sub-Ambassadors (ECSA) ─────────────────────────────────────────────────
-  // Each earns 5% per job. Their coreId links them to a Core Ambassador.
   subAmbassadors: [
     { id: "ECSA-001-001", name: "Rita",     school: "Edwin Clark", percentage: 5, coreId: "ECCA-001" },
     { id: "ECSA-001-002", name: "Praise",   school: "SDU",         percentage: 5, coreId: "ECCA-001" },

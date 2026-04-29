@@ -109,7 +109,7 @@ export default function AdminDashboard(){
 
   // Edit Core Ambassador state
   const[editCoreId,setEditCoreId]=useState<string|null>(null);
-  const[ecName,setEcName]=useState("");const[ecSchool,setEcSchool]=useState("");const[ecPct,setEcPct]=useState(10);const[ecErr,setEcErr]=useState("");
+  const[ecName,setEcName]=useState("");const[ecSchool,setEcSchool]=useState("");const[ecPct,setEcPct]=useState(10);const[ecStatus,setEcStatus]=useState<"active"|"vacant">("active");const[ecErr,setEcErr]=useState("");
 
   // Add Sub Ambassador state
   const[addSubOpen,setAddSubOpen]=useState(false);
@@ -117,7 +117,7 @@ export default function AdminDashboard(){
 
   // Edit Sub Ambassador state
   const[editSubId,setEditSubId]=useState<string|null>(null);
-  const[esName,setEsName]=useState("");const[esSchool,setEsSchool]=useState("");const[esCoreId,setEsCoreId]=useState("");const[esErr,setEsErr]=useState("");
+  const[esName,setEsName]=useState("");const[esSchool,setEsSchool]=useState("");const[esCoreId,setEsCoreId]=useState("");const[esStatus,setEsStatus]=useState<"active"|"vacant">("active");const[esErr,setEsErr]=useState("");
   const[gh,setGhRaw]=useState<{owner:string;repo:string;token:string}>(()=>lsGet(LS_G)??{owner:"",repo:"",token:""});
   const setGh=(v:typeof gh)=>{setGhRaw(v);lsSet(LS_G,v);};
   const[dep,setDep]=useState<Deploy>("idle");const[depMsg,setDepMsg]=useState("");const[ghOpen,setGhOpen]=useState(false);
@@ -374,20 +374,22 @@ export default function AdminDashboard(){
     setAddSubOpen(false);setNsErr("");setNsId("");setNsName("");setNsSchool("");setNsCoreId("");
   };
 
-  const openEditCore=(a:{id:string;name:string;school:string;percentage:number})=>{
-    setEditCoreId(a.id);setEcName(a.name);setEcSchool(a.school);setEcPct(a.percentage);setEcErr("");
+  const openEditCore=(a:{id:string;name:string;school:string;percentage:number;status?:string})=>{
+    setEditCoreId(a.id);setEcName(a.name);setEcSchool(a.school);setEcPct(a.percentage);
+    setEcStatus((a.status??"active") as "active"|"vacant");setEcErr("");
   };
   const saveEditCore=()=>{
     if(!editCoreId)return;
     if(!ecName.trim()){setEcErr("Name is required.");return;}
     setData({...data,coreAmbassadors:data.coreAmbassadors.map(c=>
-      c.id===editCoreId?{...c,name:ecName.trim(),school:ecSchool.trim(),percentage:ecPct}:c
+      c.id===editCoreId?{...c,name:ecName.trim(),school:ecSchool.trim(),percentage:ecPct,status:ecStatus}:c
     )});
     setEditCoreId(null);setEcErr("");
   };
 
-  const openEditSub=(a:{id:string;name:string;school:string;coreId:string})=>{
-    setEditSubId(a.id);setEsName(a.name);setEsSchool(a.school);setEsCoreId(a.coreId);setEsErr("");
+  const openEditSub=(a:{id:string;name:string;school:string;coreId:string;status?:string})=>{
+    setEditSubId(a.id);setEsName(a.name);setEsSchool(a.school);setEsCoreId(a.coreId);
+    setEsStatus((a.status??"active") as "active"|"vacant");setEsErr("");
   };
   const saveEditSub=()=>{
     if(!editSubId)return;
@@ -395,18 +397,9 @@ export default function AdminDashboard(){
     const coreFullId=esCoreId.trim().toUpperCase().startsWith("ECCA-")?esCoreId.trim().toUpperCase():`ECCA-${esCoreId.trim().toUpperCase()}`;
     if(!data.coreAmbassadors.find(c=>c.id===coreFullId)){setEsErr(`Core Ambassador ${coreFullId} does not exist.`);return;}
     setData({...data,subAmbassadors:data.subAmbassadors.map(s=>
-      s.id===editSubId?{...s,name:esName.trim(),school:esSchool.trim(),coreId:coreFullId}:s
+      s.id===editSubId?{...s,name:esName.trim(),school:esSchool.trim(),coreId:coreFullId,status:esStatus}:s
     )});
     setEditSubId(null);setEsErr("");
-  };
-
-  const removeCore=(id:string)=>{
-    if(!window.confirm(`Remove Core Ambassador ${id}? This will not affect their Sub Ambassadors' links, but they will no longer earn 3% from Sub jobs.`))return;
-    setData({...data,coreAmbassadors:data.coreAmbassadors.filter(c=>c.id!==id)});
-  };
-  const removeSub=(id:string)=>{
-    if(!window.confirm(`Remove Sub Ambassador ${id}? Their referral link will stop working.`))return;
-    setData({...data,subAmbassadors:data.subAmbassadors.filter(s=>s.id!==id)});
   };
 
   const doDeploy=async()=>{if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}setDep("busy");setDepMsg("Starting…");try{await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);setDep("ok");}catch(e){setDep("fail");setDepMsg(`❌ ${(e as Error).message}`);}};
@@ -527,7 +520,7 @@ export default function AdminDashboard(){
                   <td style={s.td}>
                     <div style={{display:"flex",gap:6}}>
                       <button style={{...s.cpBtn,fontSize:"0.76rem"}} onClick={()=>openEditCore(a)}>Edit</button>
-                      <button style={{...s.cpBtn,fontSize:"0.76rem",color:C.red,borderColor:"#fca5a5"}} onClick={()=>removeCore(a.id)}>Remove</button>
+                      <button style={{...s.cpBtn,fontSize:"0.76rem",color:"#888",borderColor:"#ddd"}} onClick={()=>{setResetId(a.id);setResetSt("idle");setResetMsg("");}}>Reset</button>
                     </div>
                   </td>
                 </tr>
@@ -557,7 +550,7 @@ export default function AdminDashboard(){
                   <td style={s.td}>
                     <div style={{display:"flex",gap:6}}>
                       <button style={{...s.cpBtn,fontSize:"0.76rem"}} onClick={()=>openEditSub(a)}>Edit</button>
-                      <button style={{...s.cpBtn,fontSize:"0.76rem",color:C.red,borderColor:"#fca5a5"}} onClick={()=>removeSub(a.id)}>Remove</button>
+                      <button style={{...s.cpBtn,fontSize:"0.76rem",color:"#888",borderColor:"#ddd"}} onClick={()=>{setResetId(a.id);setResetSt("idle");setResetMsg("");}}>Reset</button>
                     </div>
                   </td>
                 </tr>
@@ -681,7 +674,10 @@ export default function AdminDashboard(){
                   3. Click "Create" → name it "EduCraft" → copy the 16-char code<br/>
                   4. Add it as <code>GMAIL_APP_PASSWORD</code> in Vercel env vars
                 </div>
-                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{setSettOpen(false);loadStats();loadPending();}}>Save &amp; Refresh</button>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap" as const}}>
+                  <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{setSettOpen(false);loadStats();loadPending();}}>Save &amp; Refresh</button>
+                  <TestEmailButton secret={secret} C={C} s={s}/>
+                </div>
               </div>
             )}
           </div>
@@ -822,6 +818,58 @@ export default function AdminDashboard(){
             </table>
           </div>
           <p style={{...s.footer,marginTop:12}}>{Object.keys(data.slots).length} slots · Edits are local · Deploy to push live</p>
+
+          {/* ── Core Ambassadors in Manage ────────────────────────────── */}
+          <div style={{marginTop:32}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
+              <div style={s.secLabel}>Core Ambassadors (ECCA) — Manage</div>
+              <button style={{...s.actBtn,background:C.green,color:C.white,padding:"8px 16px",fontSize:"0.82rem"}} onClick={()=>{setNcId(nextEccaId());setNcName("");setNcSchool("");setNcPct(10);setNcErr("");setAddCoreOpen(true);}}>Add Core Ambassador</button>
+            </div>
+            <div style={s.tableWrap}>
+              <table style={s.table}>
+                <thead><tr style={s.thead}>{["ID","Name","School","Status","Edit","Reset"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>{data.coreAmbassadors.map((a,i)=>(
+                  <tr key={a.id} style={{...s.tr,background:i%2===0?C.white:C.milk}}>
+                    <td style={s.td}><span style={s.slotId}>{a.id}</span></td>
+                    <td style={s.td}><strong style={{color:C.greenDark}}>{a.name||<em style={{color:"#bbb"}}>Vacant</em>}</strong></td>
+                    <td style={s.td}><span style={s.schoolTag}>{a.school||"—"}</span></td>
+                    <td style={s.td}><span style={{...s.badge,background:(a.status??"active")==="active"?C.green:C.yellowDark,color:(a.status??"active")==="active"?C.white:C.greenDark}}>{(a.status??"active")==="active"?"Active":"Vacant"}</span></td>
+                    <td style={s.td}><button style={s.cpBtn} onClick={()=>openEditCore(a)}>Edit</button></td>
+                    <td style={s.td}><button style={{...s.cpBtn,fontSize:"0.76rem",color:"#888",borderColor:"#ddd"}} onClick={()=>{setResetId(a.id);setResetSt("idle");setResetMsg("");}}>Reset</button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ── Sub Ambassadors in Manage ─────────────────────────────── */}
+          <div style={{marginTop:24}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
+              <div style={s.secLabel}>Sub Ambassadors (ECSA) — Manage</div>
+              <button style={{...s.actBtn,background:C.green,color:C.white,padding:"8px 16px",fontSize:"0.82rem"}} onClick={()=>{setNsId("");setNsName("");setNsSchool("");setNsCoreId("");setNsErr("");setAddSubOpen(true);}}>Add Sub Ambassador</button>
+            </div>
+            <div style={s.tableWrap}>
+              <table style={s.table}>
+                <thead><tr style={s.thead}>{["ID","Name","School","Core","Status","Edit","Reset"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>{data.subAmbassadors.map((a,i)=>{const core=data.coreAmbassadors.find(c=>c.id===a.coreId);return(
+                  <tr key={a.id} style={{...s.tr,background:i%2===0?C.white:C.milk}}>
+                    <td style={s.td}><span style={s.slotId}>{a.id}</span></td>
+                    <td style={s.td}><strong style={{color:C.greenDark}}>{a.name||<em style={{color:"#bbb"}}>Vacant</em>}</strong></td>
+                    <td style={s.td}><span style={s.schoolTag}>{a.school||"—"}</span></td>
+                    <td style={s.td}><span style={{color:C.green,fontSize:"0.8rem"}}>{core?.name??a.coreId}</span></td>
+                    <td style={s.td}><span style={{...s.badge,background:(a.status??"active")==="active"?C.green:C.yellowDark,color:(a.status??"active")==="active"?C.white:C.greenDark}}>{(a.status??"active")==="active"?"Active":"Vacant"}</span></td>
+                    <td style={s.td}><button style={s.cpBtn} onClick={()=>openEditSub(a)}>Edit</button></td>
+                    <td style={s.td}><button style={{...s.cpBtn,fontSize:"0.76rem",color:"#888",borderColor:"#ddd"}} onClick={()=>{setResetId(a.id);setResetSt("idle");setResetMsg("");}}>Reset</button></td>
+                  </tr>
+                );})}
+                {data.subAmbassadors.length===0&&<tr><td colSpan={7} style={s.empty}>No sub-ambassadors yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ── Registered Emails ─────────────────────────────────────── */}
+          <RegisteredEmails stats={stats} allRows={tRows} secret={secret}/>
         </>)}
 
         <p style={s.footer}>EduCraft Ambassador Panel · Powered by Vercel</p>
@@ -914,9 +962,19 @@ export default function AdminDashboard(){
                 <label style={s.fLabel}>Base Commission %</label>
                 <input style={s.fInp} type="number" min="1" max="100" value={ecPct} onChange={e=>setEcPct(parseInt(e.target.value)||10)}/>
               </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Status</label>
+                <div style={{display:"flex",gap:8,marginTop:4}}>
+                  {(["active","vacant"] as const).map(st=>(
+                    <button key={st} style={{...s.fBtn,...(ecStatus===st?{background:st==="active"?C.green:C.yellowDark,color:st==="active"?C.white:C.greenDark,border:"none"}:{})}} onClick={()=>setEcStatus(st)}>
+                      {st==="active"?"Active":"Vacant"}
+                    </button>
+                  ))}
+                </div>
+                {ecStatus==="vacant"&&<p style={{fontSize:"0.76rem",color:"#888",marginTop:6}}>Marking as Vacant keeps the slot and link alive but signals the position is unoccupied.</p>}
+              </div>
               <div style={{gridColumn:"1/-1",background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.green}`,borderRadius:4,padding:"10px 14px",fontSize:"0.82rem",color:C.greenDark,lineHeight:1.7}}>
-                Updated commission: <strong>{ecPct}%</strong> per direct job + <strong>3%</strong> per Sub Ambassador job.
-                Total % updates automatically in the leaderboard.
+                Commission: <strong>{ecPct}%</strong> per direct job + <strong>3%</strong> per Sub Ambassador job.
               </div>
             </div>
             {ecErr&&<p style={{color:C.red,fontSize:"0.82rem",marginBottom:12}}>{ecErr}</p>}
@@ -957,9 +1015,20 @@ export default function AdminDashboard(){
                   return<p style={{fontSize:"0.72rem",marginTop:4,color:core?C.green:C.red}}>{core?`Found: ${core.name}`:"Not found"}</p>;
                 })()}
               </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <label style={s.fLabel}>Status</label>
+                <div style={{display:"flex",gap:8,marginTop:4}}>
+                  {(["active","vacant"] as const).map(st=>(
+                    <button key={st} style={{...s.fBtn,...(esStatus===st?{background:st==="active"?C.green:C.yellowDark,color:st==="active"?C.white:C.greenDark,border:"none"}:{})}} onClick={()=>setEsStatus(st)}>
+                      {st==="active"?"Active":"Vacant"}
+                    </button>
+                  ))}
+                </div>
+                {esStatus==="vacant"&&<p style={{fontSize:"0.76rem",color:"#888",marginTop:6}}>Marking as Vacant keeps the slot alive but signals no one is assigned yet.</p>}
+              </div>
               <div style={{gridColumn:"1/-1",background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.yellowDark}`,borderRadius:4,padding:"10px 14px",fontSize:"0.82rem",color:C.greenDark,lineHeight:1.7}}>
-                Reassigning to a different Core Ambassador will update the commission flow immediately.
-                This Sub still earns <strong>7%</strong> per job.
+                Reassigning to a different Core Ambassador updates the commission flow immediately.
+                This Sub earns <strong>7%</strong> per job.
               </div>
             </div>
             {esErr&&<p style={{color:C.red,fontSize:"0.82rem",marginBottom:12}}>{esErr}</p>}
@@ -1248,6 +1317,73 @@ function SC({label,v,clr,bg}:{label:string;v:number|string;clr:string;bg:string}
     <div style={{fontSize:"2rem",fontWeight:900,color:clr,lineHeight:1}}>{v}</div>
     <div style={{fontSize:"0.7rem",color:clr,opacity:0.85,marginTop:6,fontWeight:700,textTransform:"uppercase" as const,letterSpacing:"0.06em"}}>{label}</div>
   </div>;
+}
+
+// ── Test Email Button ─────────────────────────────────────────────────────────
+function TestEmailButton({secret,C:CC,s:ss}:{secret:string;C:Record<string,string>;s:Record<string,React.CSSProperties>}){
+  const[st,setSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
+  const[msg,setMsg]=useState("");
+  const test=async()=>{
+    setSt("busy");setMsg("");
+    try{
+      const r=await fetch("/api/test-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({adminSecret:secret})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed");
+      setSt("ok");setMsg(`OK · env: ${d.env}`);
+    }catch(e){setSt("fail");setMsg((e as Error).message.substring(0,80));}
+    setTimeout(()=>{setSt("idle");setMsg("");},7000);
+  };
+  return<div>
+    <button style={{...ss.actBtn,background:st==="ok"?CC.green:st==="fail"?"#ef4444":"#555",color:CC.yellow,opacity:st==="busy"?0.7:1,fontSize:"0.82rem"}} onClick={test} disabled={st==="busy"}>
+      {st==="busy"?"Sending…":st==="ok"?"Email OK":"Test Email"}
+    </button>
+    {msg&&<p style={{fontSize:"0.74rem",marginTop:5,color:st==="fail"?"#ef4444":CC.green,lineHeight:1.5,maxWidth:300}}>{msg}</p>}
+  </div>;
+}
+
+// ── Registered Emails Section ─────────────────────────────────────────────────
+function RegisteredEmails({stats:_,allRows,secret:__}:{stats:Record<string,Stat>;allRows:TRow[];secret:string}){
+  const CC={green:"#12827c",greenDark:"#0D5753",yellow:"#fbdb21",milk:"#FFF9ED",milkDark:"#F0EBD8",white:"#ffffff",yellowDark:"#E0B846"};
+  const registered=allRows.filter(r=>r.stat.email);
+  const unregistered=allRows.filter(r=>!r.stat.email&&r.name);
+  const[copied,setCopied]=useState(false);
+  const allEmails=registered.map(r=>r.stat.email).filter(Boolean).join(", ");
+  const copyAll=()=>{navigator.clipboard.writeText(allEmails);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+  return(
+    <div style={{marginTop:32}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
+        <div style={{fontSize:"0.68rem",fontWeight:700,color:CC.green,textTransform:"uppercase" as const,letterSpacing:"0.12em"}}>Registered Emails — {registered.length} of {registered.length+unregistered.length} ambassadors</div>
+        {registered.length>0&&<button style={{background:CC.green,color:CC.white,border:"none",borderRadius:6,padding:"6px 14px",fontSize:"0.78rem",cursor:"pointer",fontWeight:700}} onClick={copyAll}>{copied?"Copied":"Copy All Emails"}</button>}
+      </div>
+      {registered.length===0&&<div style={{background:CC.milk,border:`1px solid ${CC.milkDark}`,borderRadius:10,padding:"20px",textAlign:"center" as const,color:"#aaa",fontSize:"0.85rem"}}>No ambassadors have registered their email yet.</div>}
+      {registered.length>0&&(
+        <div style={{background:CC.white,border:`1.5px solid ${CC.milkDark}`,borderRadius:12,overflowX:"auto" as const}}>
+          <table style={{width:"100%",borderCollapse:"collapse" as const,fontSize:"0.84rem",minWidth:500}}>
+            <thead><tr style={{background:CC.greenDark}}>{["#","Name","Slot ID","Type","Email","Clicks","Orders"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left" as const,fontSize:"0.67rem",fontWeight:700,color:CC.yellow,textTransform:"uppercase" as const,whiteSpace:"nowrap" as const}}>{h}</th>)}</tr></thead>
+            <tbody>{registered.map((r,i)=>(
+              <tr key={r.id} style={{borderBottom:`1px solid ${CC.milkDark}`,background:i%2===0?CC.white:CC.milk}}>
+                <td style={{padding:"10px 14px",color:"#bbb",fontSize:"0.78rem"}}>{i+1}.</td>
+                <td style={{padding:"10px 14px"}}><strong style={{color:CC.greenDark}}>{r.name}</strong></td>
+                <td style={{padding:"10px 14px",fontFamily:"monospace",color:CC.green,fontWeight:700,fontSize:"0.8rem"}}>{r.id}</td>
+                <td style={{padding:"10px 14px"}}><span style={{fontSize:"0.72rem",fontWeight:700,padding:"3px 8px",borderRadius:999,background:r.kind==="core"?CC.yellow:r.kind==="sub"?"#e0f2fe":CC.milk,color:r.kind==="core"?CC.greenDark:r.kind==="sub"?"#0369a1":CC.green}}>{r.kind==="core"?"Core":r.kind==="sub"?"Sub":"General"}</span></td>
+                <td style={{padding:"10px 14px",color:CC.green,fontSize:"0.82rem"}}>{r.stat.email}</td>
+                <td style={{padding:"10px 14px",fontWeight:700,color:r.stat.clicks>0?CC.green:"#ccc"}}>{r.stat.clicks}</td>
+                <td style={{padding:"10px 14px",fontWeight:700,color:r.stat.orders>0?CC.greenDark:"#ccc"}}>{r.stat.orders}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      {unregistered.length>0&&(
+        <div style={{marginTop:14}}>
+          <div style={{fontSize:"0.68rem",fontWeight:700,color:"#aaa",textTransform:"uppercase" as const,letterSpacing:"0.1em",marginBottom:8}}>Not Yet Registered ({unregistered.length})</div>
+          <div style={{display:"flex",flexWrap:"wrap" as const,gap:8}}>
+            {unregistered.map(r=><span key={r.id} style={{background:"#f5f5f5",border:"1px solid #e0e0e0",borderRadius:6,padding:"4px 10px",fontSize:"0.78rem",color:"#888"}}>{r.name} <span style={{fontFamily:"monospace",fontSize:"0.7rem",color:"#bbb"}}>({r.id})</span></span>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const s:Record<string,React.CSSProperties>={
