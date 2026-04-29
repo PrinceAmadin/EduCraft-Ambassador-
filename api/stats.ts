@@ -4,6 +4,7 @@ import { createClient } from "redis";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 
   const supplied = (req.query.secret as string | undefined) ?? "";
   const expected = process.env.ADMIN_SECRET ?? "";

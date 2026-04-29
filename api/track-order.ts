@@ -17,6 +17,7 @@ async function send(to: string, subject: string, html: string): Promise<boolean>
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   if (req.method !== "POST") { res.status(405).json({ error: "Method not allowed." }); return; }
 
   const { slotId = "", jobDesc = "", jobAmount = "", commissionPercent = "10", adminSecret = "" } = (req.body ?? {}) as Record<string, string>;
