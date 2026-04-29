@@ -375,6 +375,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         break;
       }
 
+      // ── PAYMENT RECORDS ───────────────────────────────────────────────────────
+      case "payment-records": {
+        const client = await redisClient();
+        const ids = await client.sMembers("payment_ids");
+        if (ids.length === 0) { await client.disconnect(); res.status(200).json([]); return; }
+        const strs = await Promise.all(ids.map(id => client.get(`payment:${id}`)));
+        await client.disconnect();
+        const records = strs.filter(Boolean).map(s => { try { return JSON.parse(s!); } catch { return null; } }).filter(Boolean)
+          .sort((a: {slotId:string}, b: {slotId:string}) => parseInt(a.slotId) - parseInt(b.slotId));
+        res.status(200).json(records);
+        break;
+      }
+
+      // ── SAVE / UPDATE PAYMENT RECORD ────────────────────────────────────────
+      case "save-payment": {
+        const { slotId="", fullName="", bankName="", accountNumber="", accountName="",
+                email="", phone="", universityFull="", universityAbbr="" } = body;
+        if (!slotId.trim()) { res.status(400).json({ error: "slotId is required." }); return; }
+        const id = slotId.trim().padStart(3, "0");
+        const client = await redisClient();
+        const existing = await client.get(`payment:${id}`);
+        const prev = existing ? JSON.parse(existing) : {};
+        const updated = {
+          ...prev,
+          slotId: id,
+          ...(fullName.trim()       && { name:           fullName.trim() }),
+          ...(bankName.trim()       && { bankName:        bankName.trim() }),
+          ...(accountNumber.trim()  && { accountNumber:   accountNumber.trim() }),
+          ...(accountName.trim()    && { accountName:     accountName.trim() }),
+          ...(email.trim()          && { email:           email.trim() }),
+          ...(phone.trim()          && { phone:           phone.trim() }),
+          ...(universityFull.trim() && { universityFull:  universityFull.trim() }),
+          ...(universityAbbr.trim() && { universityAbbr:  universityAbbr.trim() }),
+          updatedAt: new Date().toISOString(),
+        };
+        await client.multi().set(`payment:${id}`, JSON.stringify(updated)).sAdd("payment_ids", id).exec();
+        await client.disconnect();
+        res.status(200).json({ success: true, record: updated });
+        break;
+      }
+
+      // ── GET SINGLE PAYMENT RECORD ────────────────────────────────────────────
+      case "get-payment": {
+        const slotId = (body.slotId || (req.query.slotId as string) || "").trim().padStart(3, "0");
+        if (!slotId || slotId === "000") { res.status(400).json({ error: "slotId required." }); return; }
+        const client = await redisClient();
+        const str = await client.get(`payment:${slotId}`);
+        await client.disconnect();
+        if (!str) { res.status(200).json(null); return; }
+        res.status(200).json(JSON.parse(str));
+        break;
+      }
+
       default:
         res.status(400).json({ error: `Unknown action: "${action}". Valid actions: stats, pending, track-order, approve, edit-pending, reset-slot, broadcast, message-ambassador, test-email, check-env, applications, approve-application, reject-application, get-next-slot` });
     }

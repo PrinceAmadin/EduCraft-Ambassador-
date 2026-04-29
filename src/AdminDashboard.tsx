@@ -176,6 +176,15 @@ export default function AdminDashboard(){
 
   // Reset slot registration
   const[resetId,setResetId]=useState<string|null>(null);
+
+  // Payment records
+  interface PaymentRecord { slotId:string;name:string;bankName:string;accountNumber:string;accountName:string;email?:string;phone?:string;universityFull?:string;universityAbbr?:string;approvedAt?:string;updatedAt?:string; }
+  const[paymentRecords,setPaymentRecords]=useState<PaymentRecord[]>([]);
+  const[payLoading,setPayLoading]=useState(false);
+  const[editPayId,setEditPayId]=useState<string|null>(null);
+  const[payForm,setPayForm]=useState<Partial<PaymentRecord>>({});
+  const[paySt,setPaySt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
+  const[payMsg,setPayMsg]=useState("");
   const[resetSt,setResetSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
   const[resetMsg,setResetMsg]=useState("");
 
@@ -183,6 +192,7 @@ export default function AdminDashboard(){
   useEffect(()=>{
     if(tab==="tracking"){loadStats();loadPending();}
     if(tab==="applications"){loadApplications();}
+    if(tab==="manage"){loadPaymentRecords();}
   },[tab]); // eslint-disable-line
 
   const base=window.location.origin;
@@ -265,14 +275,25 @@ export default function AdminDashboard(){
         ?`Slot ${slotId} approved. Welcome email sent to ${d.email}.`
         :`Slot ${slotId} approved. (Add GMAIL_APP_PASSWORD to Vercel to send welcome emails.)`
       );
-      // Also update local data slots so it shows in Ambassadors tab
-      const name=d.name||app.fullName;
-      const school=app.universityAbbr;
-      if(!data.slots[slotId.padStart(3,"0")]){
-        setData({...data,slots:{...data.slots,[slotId.padStart(3,"0")]:{name,school,status:"active"}}});
-      }
-    }catch(e){setAppActMsg(`Error: ${(e as Error).message}`);}
-  };
+      // Update liveData so it reflects everywhere (Ambassadors, Schools, Manage tabs)
+      const approvedName   = d.name   || app.fullName;
+      const approvedSchool = (editAppId===slotId?eaUniAbbr:app.universityAbbr) || app.universityAbbr;
+      const paddedId       = slotId.padStart(3,"0");
+      // Always update — whether it was vacant or new, stamp it as active with the new ambassador
+      setData({
+        ...data,
+        slots: {
+          ...data.slots,
+          [paddedId]: { name: approvedName, school: approvedSchool, status: "active" },
+        },
+      });
+      // Also update tracking stats so email shows as registered
+      setStats(prev => {
+        const existing: Stat = prev[paddedId] ?? { clicks: 0, orders: 0, email: null, registeredName: null };
+        const updated: Stat  = { clicks: existing.clicks, orders: existing.orders, email: d.email ?? null, registeredName: approvedName };
+        return { ...prev, [paddedId]: updated };
+      });
+    }catch(e){setAppActMsg(`Error: ${(e as Error).message}`);}  };
 
   const rejectApplicationFn=async(slotId:string)=>{
     setAppActMsg("");
@@ -413,6 +434,31 @@ export default function AdminDashboard(){
       setStats(p=>{const n={...p};if(n[slotId]){n[slotId]={...n[slotId],email:null,registeredName:null};}return n;});
       setTimeout(()=>{setResetId(null);setResetSt("idle");setResetMsg("");},4000);
     }catch(e){setResetSt("fail");setResetMsg(`Error: ${(e as Error).message}`);}
+  };
+
+  const loadPaymentRecords=async()=>{
+    setPayLoading(true);
+    try{
+      const r=await fetch(`/api/admin?action=payment-records&secret=${encodeURIComponent(secret)}`);
+      if(r.ok)setPaymentRecords(await r.json());
+    }catch{/**/}
+    finally{setPayLoading(false);}
+  };
+
+  const savePaymentRecord=async()=>{
+    if(!editPayId)return;
+    setPaySt("busy");setPayMsg("");
+    try{
+      const r=await fetch("/api/admin?action=save-payment",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...payForm,fullName:(payForm as Record<string,string>).name,slotId:editPayId,adminSecret:secret})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed");
+      setPaySt("ok");setPayMsg("Payment details saved.");
+      setPaymentRecords(prev=>prev.map(p=>p.slotId===editPayId?d.record:p));
+      // Also add if it was new
+      if(!paymentRecords.find(p=>p.slotId===editPayId))setPaymentRecords(prev=>[...prev,d.record]);
+      setTimeout(()=>{setEditPayId(null);setPaySt("idle");setPayMsg("");},2500);
+    }catch(e){setPaySt("fail");setPayMsg((e as Error).message);}
   };
 
   const sendBroadcast=async()=>{
@@ -614,7 +660,17 @@ export default function AdminDashboard(){
             </div>
           </div>
 
-          {appActMsg&&<div style={{...s.banner,borderColor:appActMsg.startsWith("Error")?C.red:C.green,background:appActMsg.startsWith("Error")?C.redLight:C.white,color:appActMsg.startsWith("Error")?C.red:C.greenDark,marginBottom:16}}>{appActMsg}</div>}
+          {appActMsg&&(
+            <div style={{marginBottom:16}}>
+              <div style={{...s.banner,borderColor:appActMsg.startsWith("Error")?C.red:C.green,background:appActMsg.startsWith("Error")?C.redLight:C.white,color:appActMsg.startsWith("Error")?C.red:C.greenDark,marginBottom:8}}>{appActMsg}</div>
+              {!appActMsg.startsWith("Error")&&(
+                <div style={{background:"#fffbeb",border:`1px solid ${C.yellowDark}`,borderRadius:8,padding:"10px 14px",fontSize:"0.82rem",color:C.greenDark,lineHeight:1.6}}>
+                  <strong>Dashboard already updated.</strong> The ambassador's slot, school, and tracking data are live in your current session.
+                  To make their link permanently work after a page refresh, go to <strong>Manage</strong> tab → <strong>Deploy to GitHub</strong>.
+                </div>
+              )}
+            </div>
+          )}
 
           {applications.length===0&&!appsLoading&&(
             <div style={{background:C.milk,border:`1px solid ${C.milkDark}`,borderRadius:10,padding:"40px 20px",textAlign:"center" as const,color:"#aaa",fontSize:"0.88rem"}}>
@@ -1093,6 +1149,89 @@ export default function AdminDashboard(){
 
           {/* ── Registered Emails ─────────────────────────────────────── */}
           <RegisteredEmails stats={stats} allRows={tRows} secret={secret}/>
+
+          {/* ── Payment Records ───────────────────────────────────────── */}
+          <div style={{marginTop:32}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
+              <div style={s.secLabel}>Payment Records — Ambassador Bank Details</div>
+              <button style={{...s.actBtn,background:C.greenDark,color:C.yellow,fontSize:"0.82rem"}} onClick={loadPaymentRecords} disabled={payLoading}>
+                {payLoading?"Loading…":"↻ Refresh"}
+              </button>
+            </div>
+            <div style={{...s.info,marginBottom:16}}>
+              <div style={{fontSize:"0.84rem",lineHeight:1.7,color:C.greenDark}}>
+                Bank details collected from ambassador applications. Use these for commission payments.
+                You can also manually add or update records for ambassadors who shared their details via WhatsApp.
+              </div>
+            </div>
+
+            {/* Add manual payment record */}
+            <div style={{...s.settBox,marginBottom:16}}>
+              <button style={s.settToggle} onClick={()=>{setEditPayId(p=>p==="manual"?null:"manual");setPayForm({});setPaySt("idle");setPayMsg("");}}>
+                Add / Update Payment Record Manually {editPayId==="manual"?"▲":"▼"}
+              </button>
+              {editPayId==="manual"&&(
+                <div style={{padding:"20px 18px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12,marginBottom:14}}>
+                    {[
+                      {l:"Slot ID *",       k:"slotId",         p:"e.g. 051"},
+                      {l:"Full Name",        k:"name",           p:"Ambassador's name"},
+                      {l:"Bank Name",        k:"bankName",       p:"e.g. Access Bank"},
+                      {l:"Account Number",   k:"accountNumber",  p:"10-digit account no."},
+                      {l:"Account Name",     k:"accountName",    p:"Name on account"},
+                      {l:"Email",            k:"email",          p:"ambassador@email.com"},
+                      {l:"Phone",            k:"phone",          p:"08012345678"},
+                      {l:"University",       k:"universityFull", p:"Full university name"},
+                      {l:"University Abbr.", k:"universityAbbr", p:"e.g. UNIBEN"},
+                    ].map(f=>(
+                      <div key={f.k}>
+                        <label style={s.fLabel}>{f.l}</label>
+                        <input style={s.fInp} placeholder={f.p}
+                          value={(payForm as Record<string,string>)[f.k]??""}
+                          onChange={e=>setPayForm(p=>({...p,[f.k]:e.target.value}))}/>
+                      </div>
+                    ))}
+                  </div>
+                  {payMsg&&<div style={{...s.banner,borderColor:paySt==="fail"?C.red:C.green,background:paySt==="fail"?C.redLight:C.white,color:paySt==="fail"?C.red:C.greenDark,marginBottom:12}}>{payMsg}</div>}
+                  <button style={{...s.actBtn,background:paySt==="ok"?C.green:C.greenDark,color:C.yellow,opacity:paySt==="busy"?0.7:1}}
+                    onClick={()=>{if((payForm as Record<string,string>).slotId){setEditPayId("manual");savePaymentRecord();}else setPayMsg("Slot ID is required.")}}
+                    disabled={paySt==="busy"||paySt==="ok"}>
+                    {paySt==="busy"?"Saving…":paySt==="ok"?"Saved!":"Save Record"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {paymentRecords.length===0&&!payLoading&&(
+              <div style={{background:C.milk,border:`1px solid ${C.milkDark}`,borderRadius:10,padding:"28px 20px",textAlign:"center" as const,color:"#aaa",fontSize:"0.85rem"}}>
+                No payment records yet. Records are created automatically when ambassador applications are approved.
+              </div>
+            )}
+            {paymentRecords.length>0&&(
+              <div style={{...s.tableWrap}}>
+                <table style={{...s.table,minWidth:700}}>
+                  <thead><tr style={s.thead}>{["Slot","Name","Bank","Account No.","Account Name","University","Edit"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                  <tbody>{paymentRecords.map((rec,i)=>(
+                    <tr key={rec.slotId} style={{...s.tr,background:i%2===0?C.white:C.milk}}>
+                      <td style={s.td}><span style={s.slotId}>EduCraftA-{rec.slotId}</span></td>
+                      <td style={s.td}><strong style={{color:C.greenDark}}>{rec.name||"—"}</strong></td>
+                      <td style={s.td}><span style={{fontSize:"0.84rem"}}>{rec.bankName||"—"}</span></td>
+                      <td style={s.td}><span style={{fontFamily:"monospace",color:C.green,fontSize:"0.84rem"}}>{rec.accountNumber||"—"}</span></td>
+                      <td style={s.td}><span style={{fontSize:"0.84rem"}}>{rec.accountName||"—"}</span></td>
+                      <td style={s.td}><span style={s.schoolTag}>{rec.universityAbbr||"—"}</span></td>
+                      <td style={s.td}>
+                        <button style={s.cpBtn} onClick={()=>{
+                          setEditPayId(rec.slotId);
+                          setPayForm({...rec});
+                          setPaySt("idle");setPayMsg("");
+                        }}>Edit</button>
+                      </td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>)}
 
         <p style={s.footer}>EduCraft Ambassador Panel · Powered by Vercel</p>
@@ -1156,6 +1295,48 @@ export default function AdminDashboard(){
                 {epSt==="busy"?"Saving…":epSt==="ok"?"Saved — Close when ready":"Save Corrections"}
               </button>
               <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setEditPendingId(null);setEpSt("idle");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Payment Record Overlay ──────────────────────────────────────── */}
+      {editPayId&&editPayId!=="manual"&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setEditPayId(null);setPaySt("idle");}}}>
+          <div style={{...s.overlayBox,maxWidth:540}}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Edit Payment Record</div>
+                <div style={s.overlaySub}>EduCraftA-{editPayId} — changes are saved to the payment database only</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setEditPayId(null);setPaySt("idle");}}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+              {[
+                {l:"Full Name",        k:"name",           p:"Ambassador's name"},
+                {l:"Bank Name",        k:"bankName",       p:"e.g. Access Bank"},
+                {l:"Account Number",   k:"accountNumber",  p:"10-digit account no."},
+                {l:"Account Name",     k:"accountName",    p:"Name on account"},
+                {l:"Email",            k:"email",          p:"ambassador@email.com"},
+                {l:"Phone",            k:"phone",          p:"08012345678"},
+                {l:"University",       k:"universityFull", p:"Full university name"},
+                {l:"University Abbr.", k:"universityAbbr", p:"e.g. UNIBEN"},
+              ].map(f=>(
+                <div key={f.k}>
+                  <label style={s.fLabel}>{f.l}</label>
+                  <input style={s.fInp} placeholder={f.p}
+                    value={(payForm as Record<string,string>)[f.k]??""}
+                    onChange={e=>setPayForm(p=>({...p,[f.k]:e.target.value}))}/>
+                </div>
+              ))}
+            </div>
+            {payMsg&&<div style={{...s.banner,borderColor:paySt==="fail"?C.red:C.green,background:paySt==="fail"?C.redLight:C.white,color:paySt==="fail"?C.red:C.greenDark,marginBottom:14}}>{payMsg}</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:paySt==="ok"?C.green:C.greenDark,color:C.yellow,flex:1,opacity:paySt==="busy"?0.7:1}}
+                onClick={savePaymentRecord} disabled={paySt==="busy"||paySt==="ok"}>
+                {paySt==="busy"?"Saving…":paySt==="ok"?"Saved!":"Save Changes"}
+              </button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setEditPayId(null);setPaySt("idle");}}>Cancel</button>
             </div>
           </div>
         </div>

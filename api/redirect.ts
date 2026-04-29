@@ -140,7 +140,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   // ── General Ambassador (client referral link) ──────────────────────────────
   const slot = SLOTS[id];
-  if (!slot) { res.status(404).send(errPage("❌ Not Found", "This ambassador link does not exist. Please contact EduCraft.")); return; }
+
+  // Slot not in static file — check Redis for approved ambassadors (added via application form)
+  if (!slot) {
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl) {
+      try {
+        const { createClient } = await import("redis");
+        const client = createClient({ url: redisUrl });
+        client.on("error", () => {});
+        await client.connect();
+        const profileStr = await client.get(`profile:${id}`);
+        await client.disconnect();
+        if (profileStr) {
+          const profile = JSON.parse(profileStr) as { name?: string };
+          void trackClick(id);
+          const msg = profile.name
+            ? `Hi EduCraft! I was referred by ${profile.name}. I'd like to place an order on the following Services:`
+            : "Hi EduCraft! I'd like to place an order on the following Services:";
+          res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(msg)}`);
+          return;
+        }
+      } catch { /* fall through to 404 */ }
+    }
+    res.status(404).send(errPage("❌ Not Found", "This ambassador link does not exist. Please contact EduCraft."));
+    return;
+  }
+
   void trackClick(id);
   const msg = slot.status === "vacant" || !slot.name
     ? "Hi EduCraft! I'd like to place an order on the following Services:"
