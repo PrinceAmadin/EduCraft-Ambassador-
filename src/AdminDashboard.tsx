@@ -19,7 +19,7 @@ const C = {
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TabId    = "ambassadors" | "schools" | "core" | "sub" | "tracking" | "manage";
+type TabId    = "ambassadors" | "schools" | "core" | "sub" | "tracking" | "manage" | "applications";
 type Filter   = "all" | "active" | "vacant";
 type Deploy   = "idle" | "busy" | "ok" | "fail";
 
@@ -137,6 +137,23 @@ export default function AdminDashboard(){
   const[rejId,setRejId]=useState<string|null>(null);const[rejReason,setRejReason]=useState("");
   const[appMsg,setAppMsg]=useState("");
 
+  // Ambassador applications (new recruitment flow)
+  interface Application {
+    slotId:string;fullName:string;universityFull:string;universityAbbr:string;
+    email:string;phone:string;bankName:string;accountNumber:string;accountName:string;
+    submittedAt:string;status:string;
+  }
+  const[applications,setApplications]=useState<Application[]>([]);
+  const[appsLoading,setAppsLoading]=useState(false);
+  const[appActMsg,setAppActMsg]=useState("");
+  const[editAppId,setEditAppId]=useState<string|null>(null);
+  const[rejectAppId,setRejectAppId]=useState<string|null>(null);
+  const[rejectAppReason,setRejectAppReason]=useState("");
+  // Edit application form state
+  const[eaFullName,setEaFullName]=useState("");
+  const[eaUniAbbr,setEaUniAbbr]=useState("");
+  const[eaEmail,setEaEmail]=useState("");
+
   // Edit pending registration state
   const[editPendingId,setEditPendingId]=useState<string|null>(null); // originalSlotId
   const[epSlotId,setEpSlotId]=useState("");
@@ -152,13 +169,21 @@ export default function AdminDashboard(){
   const[logDesc,setLogDesc]=useState("");const[logAmt,setLogAmt]=useState("");const[logPct,setLogPct]=useState("10");
   const[logSt,setLogSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");const[logMsg,setLogMsg]=useState("");
 
+  // Direct message state
+  const[msgId,setMsgId]=useState<string|null>(null);const[msgName,setMsgName]=useState("");
+  const[msgTitle,setMsgTitle]=useState("");const[msgBody,setMsgBody]=useState("");
+  const[msgSt,setMsgSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");const[msgErr,setMsgErr]=useState("");
+
   // Reset slot registration
   const[resetId,setResetId]=useState<string|null>(null);
   const[resetSt,setResetSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
   const[resetMsg,setResetMsg]=useState("");
 
   // Auto-fetch when Tracking tab opens
-  useEffect(()=>{if(tab==="tracking"){loadStats();loadPending();}},[tab]); // eslint-disable-line
+  useEffect(()=>{
+    if(tab==="tracking"){loadStats();loadPending();}
+    if(tab==="applications"){loadApplications();}
+  },[tab]); // eslint-disable-line
 
   const base=window.location.origin;
 
@@ -210,6 +235,57 @@ export default function AdminDashboard(){
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
   const copy=(text:string,key:string)=>{navigator.clipboard.writeText(text);setCopied(key);setTimeout(()=>setCopied(null),2000);};
+
+  const loadApplications=async()=>{
+    setAppsLoading(true);
+    try{
+      const qs=secret?`?secret=${encodeURIComponent(secret)}`:"";
+      const r=await fetch(`/api/applications${qs}`);
+      if(r.ok)setApplications(await r.json());
+    }catch{/**/}
+    finally{setAppsLoading(false);}
+  };
+
+  const approveApplication=async(slotId:string)=>{
+    setAppActMsg("");
+    const app=applications.find(a=>a.slotId===slotId);
+    if(!app)return;
+    try{
+      const r=await fetch("/api/approve-application",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({slotId,adminSecret:secret,baseUrl:base,
+          fullName:editAppId===slotId?eaFullName:app.fullName,
+          universityAbbr:editAppId===slotId?eaUniAbbr:app.universityAbbr,
+          email:editAppId===slotId?eaEmail:app.email,
+        })});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed");
+      setApplications(prev=>prev.filter(a=>a.slotId!==slotId));
+      setEditAppId(null);
+      setAppActMsg(d.emailSent
+        ?`Slot ${slotId} approved. Welcome email sent to ${d.email}.`
+        :`Slot ${slotId} approved. (Add GMAIL_APP_PASSWORD to Vercel to send welcome emails.)`
+      );
+      // Also update local data slots so it shows in Ambassadors tab
+      const name=d.name||app.fullName;
+      const school=app.universityAbbr;
+      if(!data.slots[slotId.padStart(3,"0")]){
+        setData({...data,slots:{...data.slots,[slotId.padStart(3,"0")]:{name,school,status:"active"}}});
+      }
+    }catch(e){setAppActMsg(`Error: ${(e as Error).message}`);}
+  };
+
+  const rejectApplicationFn=async(slotId:string)=>{
+    setAppActMsg("");
+    try{
+      const r=await fetch("/api/reject-application",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({slotId,reason:rejectAppReason,adminSecret:secret})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed");
+      setApplications(prev=>prev.filter(a=>a.slotId!==slotId));
+      setRejectAppId(null);setRejectAppReason("");
+      setAppActMsg(`Slot ${slotId} application rejected.${d.emailSent?" Notification email sent.":""}`);
+    }catch(e){setAppActMsg(`Error: ${(e as Error).message}`);}
+  };
 
   const loadStats=async()=>{
     setSLoad(true);setSErr("");
@@ -287,6 +363,22 @@ export default function AdminDashboard(){
   };
 
   const openLog=(id:string,name:string)=>{setLogId(id);setLogName(name);setLogDesc("");setLogAmt("");setLogPct("10");setLogSt("idle");setLogMsg("");};
+
+  const openMessage=(id:string,name:string)=>{setMsgId(id);setMsgName(name);setMsgTitle("");setMsgBody("");setMsgSt("idle");setMsgErr("");};
+  const sendMessage=async()=>{
+    if(!msgId)return;
+    if(!msgTitle.trim()){setMsgErr("Title is required.");return;}
+    if(!msgBody.trim()){setMsgErr("Message is required.");return;}
+    setMsgSt("busy");setMsgErr("");
+    try{
+      const r=await fetch("/api/message-ambassador",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({slotId:msgId,title:msgTitle,message:msgBody,adminSecret:secret})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Failed to send.");
+      setMsgSt("ok");setMsgErr(`Sent to ${d.sentTo}`);
+      setTimeout(()=>{setMsgId(null);setMsgSt("idle");setMsgErr("");},4000);
+    }catch(e){setMsgSt("fail");setMsgErr((e as Error).message);}
+  };
 
   const logOrder=async()=>{
     if(!logId)return;
@@ -406,12 +498,13 @@ export default function AdminDashboard(){
 
   // Nav tabs
   const navTabs:{key:TabId;label:string}[]=[
-    {key:"ambassadors",label:"Ambassadors"},
-    {key:"schools",    label:"Schools"},
-    {key:"core",       label:"Core (ECCA)"},
-    {key:"sub",        label:"Sub (ECSA)"},
-    {key:"tracking",   label:pending.length>0?`Tracking (${pending.length})`:"Tracking"},
-    {key:"manage",     label:"Manage"},
+    {key:"ambassadors",  label:"Ambassadors"},
+    {key:"schools",      label:"Schools"},
+    {key:"core",         label:"Core (ECCA)"},
+    {key:"sub",          label:"Sub (ECSA)"},
+    {key:"applications", label:applications.length>0?`Applications (${applications.length})`:"Applications"},
+    {key:"tracking",     label:pending.length>0?`Tracking (${pending.length})`:"Tracking"},
+    {key:"manage",       label:"Manage"},
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -499,6 +592,127 @@ export default function AdminDashboard(){
         </>)}
 
         {/* ════ CORE ════ */}
+        {/* ════ APPLICATIONS ════ */}
+        {tab==="applications"&&(<>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap" as const,gap:8}}>
+            <div style={s.secLabel}>New Ambassador Applications</div>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...s.actBtn,background:C.greenDark,color:C.yellow,fontSize:"0.82rem"}} onClick={loadApplications} disabled={appsLoading}>
+                {appsLoading?"Loading…":"↻ Refresh"}
+              </button>
+              <button style={{...s.actBtn,background:C.green,color:C.white,fontSize:"0.82rem"}}
+                onClick={()=>copy(`${base}/apply`,"apply-link")}>
+                {copied==="apply-link"?"Copied":"Copy Application Link"}
+              </button>
+            </div>
+          </div>
+
+          <div style={{...s.info,marginBottom:16}}>
+            <div style={{flex:1,fontSize:"0.85rem",lineHeight:1.7}}>
+              Share <strong>{base}/apply</strong> with potential ambassadors. They fill in the form, you review here and approve or reject.
+              On approval, they are automatically added to the system and receive a welcome email with their referral link.
+            </div>
+          </div>
+
+          {appActMsg&&<div style={{...s.banner,borderColor:appActMsg.startsWith("Error")?C.red:C.green,background:appActMsg.startsWith("Error")?C.redLight:C.white,color:appActMsg.startsWith("Error")?C.red:C.greenDark,marginBottom:16}}>{appActMsg}</div>}
+
+          {applications.length===0&&!appsLoading&&(
+            <div style={{background:C.milk,border:`1px solid ${C.milkDark}`,borderRadius:10,padding:"40px 20px",textAlign:"center" as const,color:"#aaa",fontSize:"0.88rem"}}>
+              No pending applications. Share the application link with new ambassadors.
+            </div>
+          )}
+
+          {applications.length>0&&applications.map((app,i)=>(
+            <div key={app.slotId} style={{background:C.white,border:`1.5px solid ${C.milkDark}`,borderRadius:12,marginBottom:16,overflow:"hidden"}}>
+              {/* Application header */}
+              <div style={{background:C.greenDark,padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap" as const,gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontFamily:"monospace",color:C.yellow,fontWeight:700,fontSize:"0.95rem"}}>EduCraftA-{app.slotId}</span>
+                  <span style={{color:C.white,fontWeight:600}}>{app.fullName}</span>
+                </div>
+                <span style={{fontSize:"0.76rem",color:"rgba(255,255,255,0.7)"}}>
+                  Submitted {new Date(app.submittedAt).toLocaleDateString()}
+                </span>
+              </div>
+
+              {/* Details grid */}
+              <div style={{padding:"16px 18px"}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12,marginBottom:16}}>
+                  {[
+                    {l:"University",   v:`${app.universityFull} (${app.universityAbbr})`},
+                    {l:"Email",        v:app.email},
+                    {l:"Phone",        v:app.phone},
+                    {l:"Bank",         v:app.bankName},
+                    {l:"Account No.",  v:app.accountNumber},
+                    {l:"Account Name", v:app.accountName},
+                  ].map(f=>(
+                    <div key={f.l}>
+                      <div style={{fontSize:"0.68rem",fontWeight:700,color:"#888",textTransform:"uppercase" as const,letterSpacing:"0.06em",marginBottom:3}}>{f.l}</div>
+                      <div style={{fontSize:"0.86rem",color:C.greenDark,fontWeight:600}}>{f.v}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Admin edit before approval */}
+                {editAppId===app.slotId&&(
+                  <div style={{background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid ${C.yellowDark}`,borderRadius:6,padding:"14px 16px",marginBottom:14}}>
+                    <div style={{fontSize:"0.75rem",fontWeight:700,color:C.greenDark,marginBottom:12}}>Edit before approving (optional overrides):</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
+                      {[
+                        {l:"Full Name",     v:eaFullName,  s:setEaFullName,  ph:app.fullName},
+                        {l:"Uni Abbr.",     v:eaUniAbbr,   s:setEaUniAbbr,   ph:app.universityAbbr},
+                        {l:"Email",         v:eaEmail,     s:setEaEmail,     ph:app.email},
+                      ].map(f=>(
+                        <div key={f.l}>
+                          <label style={{...s.fLabel,fontSize:"0.68rem"}}>{f.l}</label>
+                          <input style={{...s.fInp,padding:"7px 10px",fontSize:"0.82rem"}} value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.ph}/>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Reject reason input */}
+                {rejectAppId===app.slotId&&(
+                  <div style={{background:C.redLight,border:`1px solid #fca5a5`,borderRadius:6,padding:"12px 16px",marginBottom:14}}>
+                    <div style={{fontSize:"0.75rem",fontWeight:700,color:C.red,marginBottom:8}}>Rejection reason (optional — will be emailed to applicant):</div>
+                    <textarea style={{...s.fInp,height:70,resize:"vertical" as const,fontFamily:"inherit",fontSize:"0.84rem"}}
+                      placeholder="e.g. Details could not be verified…"
+                      value={rejectAppReason} onChange={e=>setRejectAppReason(e.target.value)}/>
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div style={{display:"flex",gap:8,flexWrap:"wrap" as const}}>
+                  <button style={{...s.actBtn,background:C.green,color:C.white,padding:"8px 18px",fontSize:"0.82rem"}}
+                    onClick={()=>approveApplication(app.slotId)}>
+                    Approve
+                  </button>
+                  <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`,padding:"8px 18px",fontSize:"0.82rem"}}
+                    onClick={()=>{
+                      if(editAppId===app.slotId){setEditAppId(null);}
+                      else{setEditAppId(app.slotId);setEaFullName(app.fullName);setEaUniAbbr(app.universityAbbr);setEaEmail(app.email);}
+                    }}>
+                    {editAppId===app.slotId?"Cancel Edit":"Edit Before Approving"}
+                  </button>
+                  {rejectAppId===app.slotId?(
+                    <>
+                      <button style={{...s.actBtn,background:C.red,color:C.white,padding:"8px 18px",fontSize:"0.82rem"}}
+                        onClick={()=>rejectApplicationFn(app.slotId)}>Confirm Reject</button>
+                      <button style={{...s.cpBtn,fontSize:"0.82rem"}} onClick={()=>{setRejectAppId(null);setRejectAppReason("");}}>Cancel</button>
+                    </>
+                  ):(
+                    <button style={{...s.actBtn,background:C.red,color:C.white,padding:"8px 18px",fontSize:"0.82rem"}}
+                      onClick={()=>{setRejectAppId(app.slotId);setRejectAppReason("");}}>
+                      Reject
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </>)}
+
         {tab==="core"&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
             <div style={s.secLabel}>Core Ambassadors (ECCA) — Senior Partners</div>
@@ -694,7 +908,7 @@ export default function AdminDashboard(){
             <table style={s.table}>
               <thead>
                 <tr style={s.thead}>
-                  {["#","Ambassador","Type","Clicks","Orders","Conv %","Email Status","Log Order"].map(h=>(
+                  {["#","Ambassador","Type","Clicks","Orders","Conv %","Email Status","Actions"].map(h=>(
                     <th key={h} style={{...s.th,...(h==="Conv %"?{}:{})}}>
                       {h==="Conv %"?(
                         <span title="Conversion % = Orders ÷ Clicks × 100. Only meaningful when Clicks > 0.">{h} ⓘ</span>
@@ -732,7 +946,16 @@ export default function AdminDashboard(){
                         ?<span style={{color:C.green,fontWeight:700,fontSize:"0.8rem"}}>✓ Registered</span>
                         :<span style={{color:"#ccc",fontSize:"0.8rem"}}>Not registered</span>}
                     </td>
-                    <td style={s.td}><button style={{...s.cpBtn,background:C.greenDark,color:C.yellow,border:"none"}} onClick={()=>openLog(row.id,row.name)}>Log</button></td>
+                    <td style={s.td}>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap" as const}}>
+                        <button style={{...s.cpBtn,background:C.greenDark,color:C.yellow,border:"none"}} onClick={()=>openLog(row.id,row.name)}>Log</button>
+                        <button style={{...s.cpBtn,background:row.stat.email?C.green:"#e0e0e0",color:row.stat.email?C.white:"#aaa",border:"none",cursor:row.stat.email?"pointer":"not-allowed"}}
+                          onClick={()=>{if(row.stat.email)openMessage(row.id,row.name);}}
+                          title={row.stat.email?"Send a direct message":"Ambassador must register their email first"}>
+                          Message
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );})}
                 {tRows.length===0&&!sLoad&&<tr><td colSpan={8} style={s.empty}>No ambassadors found. Stats appear once links are clicked.</td></tr>}
@@ -1246,6 +1469,49 @@ export default function AdminDashboard(){
                 {resetSt==="busy"?"Clearing…":resetSt==="ok"?"Done — Close when ready":"Confirm Reset"}
               </button>
               <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}} onClick={()=>{setResetId(null);setResetSt("idle");}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Direct Message Overlay ───────────────────────────────────────────── */}
+      {msgId&&(
+        <div style={s.overlay} onClick={e=>{if(e.target===e.currentTarget){setMsgId(null);setMsgSt("idle");}}}>
+          <div style={s.overlayBox}>
+            <div style={s.overlayHead}>
+              <div>
+                <div style={s.overlayTitle}>Send Message</div>
+                <div style={s.overlaySub}>{msgName} · {msgId}</div>
+              </div>
+              <button style={s.overlayClose} onClick={()=>{setMsgId(null);setMsgSt("idle");}}>✕</button>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={s.fLabel}>Title / Subject *</label>
+              <input style={s.fInp} placeholder="e.g. Important Update, Well Done!, Action Required…"
+                value={msgTitle} onChange={e=>setMsgTitle(e.target.value)}/>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={s.fLabel}>Message *</label>
+              <textarea style={{...s.fInp,height:130,resize:"vertical" as const,fontFamily:"inherit"}}
+                placeholder="Type your message here…"
+                value={msgBody} onChange={e=>setMsgBody(e.target.value)}/>
+            </div>
+            {msgErr&&(
+              <div style={{...s.banner,marginBottom:14,
+                borderColor:msgSt==="fail"?C.red:msgSt==="ok"?C.green:C.yellowDark,
+                background:msgSt==="fail"?C.redLight:C.white,
+                color:msgSt==="fail"?C.red:C.greenDark}}>
+                {msgErr}
+              </div>
+            )}
+            <div style={{display:"flex",gap:8}}>
+              <button
+                style={{...s.actBtn,background:msgSt==="ok"?C.green:C.greenDark,color:C.yellow,flex:1,opacity:msgSt==="busy"?0.7:1}}
+                onClick={sendMessage} disabled={msgSt==="busy"||msgSt==="ok"}>
+                {msgSt==="busy"?"Sending…":msgSt==="ok"?"Sent":"Send Message"}
+              </button>
+              <button style={{...s.actBtn,background:C.milk,color:C.greenDark,border:`1.5px solid ${C.milkDark}`}}
+                onClick={()=>{setMsgId(null);setMsgSt("idle");setMsgErr("");}}>Cancel</button>
             </div>
           </div>
         </div>
