@@ -31,8 +31,14 @@ interface SyncData { profiles: Record<string, SyncProfile>; payments: Record<str
 
 const SCHOOL: Record<string,string> = {
   EUI:"Edo State University",UNIBEN:"University of Benin",DELSU:"Delta State University",
-  AAU:"Ambrose Alli University",ECU:"Edwin Clark University",SDU:"Univ. of Southern Denmark",
-  UNILAG:"University of Lagos",PG:"Postgraduate",Admin:"Administration",
+  AAU:"Ambrose Alli University",ECU:"Edwin Clark University",SDU:"University of Southern Denmark",
+  UNILAG:"University of Lagos",PG:"Postgraduate Students",Admin:"Administration",
+  UNICAL:"University of Calabar",OAU:"Obafemi Awolowo University",UI:"University of Ibadan",
+  UNILORIN:"University of Ilorin",ABU:"Ahmadu Bello University",LASU:"Lagos State University",
+  FUTA:"Federal University of Technology Akure",FUTO:"Federal University of Technology Owerri",
+  COOU:"Chukwuemeka Odumegwu Ojukwu University",IMSU:"Imo State University",
+  ESUT:"Enugu State University of Science and Technology",UNIZIK:"Nnamdi Azikiwe University",
+  "Co-founders":"EduCraft Co-founders",
 };
 
 // ── LocalStorage ──────────────────────────────────────────────────────────────
@@ -48,17 +54,37 @@ function genAmbTS(d:AmbassadorData):string{
   return `// src/ambassadors.ts\nexport interface AmbassadorSlot{name:string;school:string;status:"active"|"vacant";}\nexport interface CoreAmbassador{id:string;name:string;school:string;percentage:number;status?:"active"|"vacant";}\nexport interface SubAmbassador{id:string;name:string;school:string;percentage:number;coreId:string;status?:"active"|"vacant";}\nexport interface AmbassadorData{educraft_whatsapp:string;slots:Record<string,AmbassadorSlot>;coreAmbassadors:CoreAmbassador[];subAmbassadors:SubAmbassador[];}\nconst ambassadors:AmbassadorData={\n  educraft_whatsapp:"${d.educraft_whatsapp}",\n  slots:{\n${sl}\n  },\n  coreAmbassadors:[\n${cl}\n  ],\n  subAmbassadors:[\n${sb}\n  ],\n};\nexport default ambassadors;\n`;
 }
 
+// Generates updated SLOTS block for redirect.ts
+function genSlotsBlock(d:AmbassadorData):string{
+  const lines=Object.entries(d.slots).map(([id,s])=>`  "${id}": { name: ${JSON.stringify(s.name).padEnd(22)}, school: ${JSON.stringify(s.school).padEnd(14)}, status: "${s.status}" },`).join("\n");
+  return `const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {\n${lines}\n};`;
+}
+
 async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<void>{
   const h={"Authorization":`token ${token}`,"Accept":"application/vnd.github.v3+json","Content-Type":"application/json"};
   const base=`https://api.github.com/repos/${owner}/${repo}/contents`;
   const b64=(s:string)=>btoa(unescape(encodeURIComponent(s)));
-  const sha=async(p:string)=>{const r=await fetch(`${base}/${p}`,{headers:h});if(!r.ok)throw new Error(`Cannot find ${p} in repo`);return(await r.json()).sha as string;};
-  const put=async(p:string,c:string,s:string)=>{const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"🤖 EduCraft Admin deploy",content:b64(c),sha:s})});if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}};
-  log("📡 Connecting to GitHub…");
-  const aS=await sha("src/ambassadors.ts");
-  log("Updating ambassadors.ts…");
+  const getFile=async(p:string)=>{const r=await fetch(`${base}/${p}`,{headers:h});if(!r.ok)throw new Error(`Cannot read ${p} in repo`);const j=await r.json();return{sha:j.sha as string,content:atob((j.content as string).replace(/\n/g,""))};};
+  const put=async(p:string,c:string,s:string)=>{const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"EduCraft Admin deploy",content:b64(c),sha:s})});if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}};
+
+  log("Connecting to GitHub…");
+
+  // 1. Update ambassadors.ts
+  const {sha:aS}=await getFile("src/ambassadors.ts");
+  log("Updating src/ambassadors.ts…");
   await put("src/ambassadors.ts",genAmbTS(data),aS);
-  log("Done. Vercel is rebuilding (~30s)…");
+
+  // 2. Update SLOTS block inside api/redirect.ts
+  log("Updating api/redirect.ts…");
+  const {sha:rS,content:rContent}=await getFile("api/redirect.ts");
+  const slotsStart=rContent.indexOf("const SLOTS:");
+  const slotsEnd=rContent.indexOf("\n};",slotsStart)+3;
+  if(slotsStart===-1)throw new Error("Could not find SLOTS block in redirect.ts");
+  const newRedirect=rContent.substring(0,slotsStart)+genSlotsBlock(data)+rContent.substring(slotsEnd);
+  await put("api/redirect.ts",newRedirect,rS);
+
+  log("Both files pushed to GitHub. Vercel is rebuilding now.");
+  log("Monitor: https://vercel.com/dashboard → educraft-ambassador → Deployments");
 }
 
 function nextId(slots:Record<string,AmbassadorSlot>):string{
@@ -702,7 +728,13 @@ export default function AdminDashboard(){
           <div style={s.schoolGrid}>
             {schoolStats.map(([abbr,st])=>{const tot=st.active+st.vacant;const pct=Math.round((st.active/tot)*100);return(
               <div key={abbr} style={s.schoolCard}>
-                <div style={s.schoolHead}><div><div style={s.schoolAbbr}>{abbr||"—"}</div><div style={s.schoolName}>{SCHOOL[abbr]||abbr}</div></div><div style={s.schoolTot}>{tot}</div></div>
+                <div style={s.schoolHead}>
+                  <div>
+                    <div style={s.schoolAbbr}>{abbr||"—"}</div>
+                    <div style={s.schoolName}>{SCHOOL[abbr] || (abbr==="—" ? "Unknown School" : `${abbr} University`)}</div>
+                  </div>
+                  <div style={s.schoolTot}>{tot}</div>
+                </div>
                 <div style={s.prog}><div style={{...s.progFill,width:`${pct}%`}}/></div>
                 <div style={s.schoolFoot}><span style={{color:C.green,fontWeight:700}}>● {st.active} Active</span><span style={{color:C.yellowDark,fontWeight:600}}>○ {st.vacant} Vacant</span><span style={{color:"#aaa"}}>{pct}% filled</span></div>
               </div>

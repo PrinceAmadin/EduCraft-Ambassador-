@@ -128,8 +128,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const nameKey = await client.get(`app_name:${normName}`);
 
     if (slotTaken)    { await client.disconnect(); res.status(409).json({ error: "This slot ID is already taken. Please refresh the page to get a new slot." }); return; }
-    if (emailExists)  { await client.disconnect(); res.status(409).json({ error: "This email address has already been used to apply. If you think this is a mistake, please contact EduCraft." }); return; }
-    if (phoneExists)  { await client.disconnect(); res.status(409).json({ error: "This phone number has already been used to apply. If you think this is a mistake, please contact EduCraft." }); return; }
+    if (emailExists)  { await client.disconnect(); res.status(409).json({ error: "This email address has already been used to apply. If you think this is a mistake, please contact us at help.educraft@gmail.com." }); return; }
+    if (phoneExists)  { await client.disconnect(); res.status(409).json({ error: "This phone number has already been used to apply. If you think this is a mistake, please contact us at help.educraft@gmail.com." }); return; }
     if (bankExists)   { await client.disconnect(); res.status(409).json({ error: "This bank account number has already been registered. Each ambassador must use a unique account." }); return; }
     if (nameKey)      { await client.disconnect(); res.status(409).json({ error: "An application with a very similar name already exists. If this is you, please contact EduCraft instead of reapplying." }); return; }
 

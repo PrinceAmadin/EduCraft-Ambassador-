@@ -104,7 +104,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
     if (await client.sIsMember("approved_ids", id)) {
       await client.disconnect();
-      res.status(409).json({ error: "This Slot ID is already registered and active. Contact EduCraft if you think this is wrong." });
+      res.status(409).json({ error: "This Slot ID is already registered and active. Contact us at help.educraft@gmail.com if you think this is wrong." });
       return;
     }
     if (await client.sIsMember("pending_ids", id)) {

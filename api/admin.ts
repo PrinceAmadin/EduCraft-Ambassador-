@@ -195,11 +195,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       case "reset-slot": {
         const { slotId="" } = body;
         if (!slotId.trim()) { res.status(400).json({ error: "slotId is required." }); return; }
-        const id = slotId.trim().toUpperCase();
+        const id = slotId.trim().padStart(3,"0").toUpperCase();
         const client = await redisClient();
-        await client.multi().del(`profile:${id}`).del(`pending:${id}`).del(`clicks:${id}`).del(`orders:${id}`).del(`orders:${id}:log`).sRem("approved_ids",id).sRem("pending_ids",id).sRem("ambassador_ids",id).exec();
+        // Fetch application and profile before deleting so we can remove uniqueness indexes
+        const [appStr, profileStr, pendingStr] = await Promise.all([
+          client.get(`application:${id}`),
+          client.get(`profile:${id}`),
+          client.get(`pending:${id}`),
+        ]);
+        const tx = client.multi()
+          .del(`profile:${id}`)
+          .del(`pending:${id}`)
+          .del(`clicks:${id}`)
+          .del(`orders:${id}`)
+          .del(`orders:${id}:log`)
+          .del(`payment:${id}`)
+          .del(`application:${id}`)
+          .sRem("approved_ids", id)
+          .sRem("pending_ids", id)
+          .sRem("ambassador_ids", id)
+          .sRem("application_ids", id)
+          .sRem("approved_application_ids", id)
+          .sRem("payment_ids", id);
+        // Clear all duplicate-detection indexes from the application
+        if (appStr) {
+          try {
+            const app = JSON.parse(appStr) as Record<string,string>;
+            const normEmail = app.email ?? "";
+            const normPhone = (app.phone ?? "").replace(/\D/g,"");
+            const normBank  = (app.accountNumber ?? "").replace(/\D/g,"");
+            const normName  = (app.fullName ?? "").trim().toLowerCase().replace(/\s+/g," ");
+            tx.sRem("app_emails", normEmail)
+              .sRem("app_phones", normPhone)
+              .sRem("app_banks",  normBank)
+              .del(`app_name:${normName}`);
+          } catch {}
+        }
+        // Also clear from pending if it exists
+        if (pendingStr) {
+          try {
+            const p = JSON.parse(pendingStr) as Record<string,string>;
+            const normEmail = (p.email ?? "").trim().toLowerCase();
+            tx.sRem("app_emails", normEmail);
+          } catch {}
+        }
+        await tx.exec();
         await client.disconnect();
-        res.status(200).json({ success:true, message:`Slot ${id} fully reset.` });
+        res.status(200).json({ success:true, message:`Slot ${id} fully reset. All data and duplicate locks cleared.` });
         break;
       }
 
@@ -403,17 +445,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       case "clear-ambassador": {
         const { slotId="" } = body;
         if (!slotId.trim()) { res.status(400).json({ error: "slotId is required." }); return; }
-        const id = slotId.trim().padStart(3, "0");
+        const id = slotId.trim().padStart(3,"0");
         const client = await redisClient();
-        await client.multi()
+        // Fetch application data before deleting to clear uniqueness indexes
+        const appStr = await client.get(`application:${id}`);
+        const tx = client.multi()
           .del(`profile:${id}`)
+          .del(`payment:${id}`)
+          .del(`application:${id}`)
           .sRem("approved_ids", id)
-          .exec();
-        // Also clear payment record
-        await client.del(`payment:${id}`);
-        await client.sRem("payment_ids", id);
+          .sRem("ambassador_ids", id)
+          .sRem("payment_ids", id)
+          .sRem("application_ids", id)
+          .sRem("approved_application_ids", id);
+        if (appStr) {
+          try {
+            const app = JSON.parse(appStr) as Record<string,string>;
+            const normEmail = app.email ?? "";
+            const normPhone = (app.phone ?? "").replace(/\D/g,"");
+            const normBank  = (app.accountNumber ?? "").replace(/\D/g,"");
+            const normName  = (app.fullName ?? "").trim().toLowerCase().replace(/\s+/g," ");
+            tx.sRem("app_emails", normEmail)
+              .sRem("app_phones", normPhone)
+              .sRem("app_banks",  normBank)
+              .del(`app_name:${normName}`);
+          } catch {}
+        }
+        await tx.exec();
         await client.disconnect();
-        res.status(200).json({ success: true, message: `Ambassador profile and payment details for slot ${id} cleared.` });
+        res.status(200).json({ success: true, message: `Slot ${id} fully cleared. All details and duplicate locks removed.` });
         break;
       }
 
@@ -493,7 +553,7 @@ function welcomeAppHtml(name:string,slotId:string,link:string,school:string):str
 }
 function rejectionHtml(name:string,slotId:string,reason:string):string{
   const r=reason?`<div style="background:#fafafa;border-left:4px solid #ccc;padding:12px 16px;margin:16px 0;color:#555;font-size:.88rem">${reason}</div>`:"";
-  return `<div style="font-family:'Segoe UI',Arial,sans-serif;background:#f5f5f5;padding:32px 16px"><div style="max-width:520px;margin:0 auto;background:#fff;border-top:4px solid #12827c;border-radius:4px;padding:40px"><h2 style="color:#0D5753;margin:0 0 20px">Registration Update — Slot ${slotId}</h2><p style="color:#333;line-height:1.7">Dear <strong>${name}</strong>,</p><p style="color:#333;line-height:1.7">Thank you for applying. After reviewing your registration for slot <strong>${slotId}</strong>, we were unable to verify the details at this time.</p>${r}<p style="color:#333;line-height:1.7">If you believe this is an error, please contact your EduCraft coordinator or resubmit.</p><div style="margin-top:28px;padding-top:18px;border-top:1px solid #e8e8e8;font-size:.75rem;color:#888">EDUCRAFT — Academic &amp; Technical Documentation Experts</div></div></div>`;
+  return `<div style="font-family:'Segoe UI',Arial,sans-serif;background:#f5f5f5;padding:32px 16px"><div style="max-width:520px;margin:0 auto;background:#fff;border-top:4px solid #12827c;border-radius:4px;padding:40px"><h2 style="color:#0D5753;margin:0 0 20px">Registration Update — Slot ${slotId}</h2><p style="color:#333;line-height:1.7">Dear <strong>${name}</strong>,</p><p style="color:#333;line-height:1.7">Thank you for applying. After reviewing your registration for slot <strong>${slotId}</strong>, we were unable to verify the details at this time.</p>${r}<p style="color:#333;line-height:1.7">If you believe this is an error, please contact us at help.educraft@gmail.com or resubmit.</p><div style="margin-top:28px;padding-top:18px;border-top:1px solid #e8e8e8;font-size:.75rem;color:#888">EDUCRAFT — Academic &amp; Technical Documentation Experts</div></div></div>`;
 }
 function broadcastHtml(subject:string,body:string):string{
   return `<div style="font-family:'Segoe UI',Arial,sans-serif;background:#f5f5f5;padding:32px 16px"><div style="max-width:520px;margin:0 auto;background:#fff;border-top:4px solid #12827c;border-radius:4px;padding:40px"><div style="font-size:.75rem;font-weight:700;color:#12827c;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">EduCraft — Ambassador Update</div><h1 style="color:#0D5753;font-size:1.3rem;font-weight:700;margin:0 0 20px">${subject}</h1><div style="color:#333;line-height:1.8;font-size:.92rem">${body}</div><div style="margin-top:32px;padding-top:20px;border-top:1px solid #e8e8e8;font-size:.75rem;color:#888">EDUCRAFT — Academic &amp; Technical Documentation Experts. This message was sent to all active EduCraft Ambassadors.</div></div></div>`;
