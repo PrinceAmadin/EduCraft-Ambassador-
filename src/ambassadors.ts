@@ -1,118 +1,83 @@
 // src/ambassadors.ts
-export interface AmbassadorSlot {
-  name: string;
-  school: string;
-  status: "active" | "vacant";
-}
-
-export interface CoreAmbassador {
-  id: string;
-  name: string;
-  school: string;
-  percentage: number;
-  status?: "active" | "vacant"; // optional for backward compatibility
-}
-
-export interface SubAmbassador {
-  id: string;
-  name: string;
-  school: string;
-  percentage: number;
-  coreId: string;
-  status?: "active" | "vacant"; // optional for backward compatibility
-}
-
-export interface AmbassadorData {
-  educraft_whatsapp: string;
-  slots: Record<string, AmbassadorSlot>;
-  coreAmbassadors: CoreAmbassador[];
-  subAmbassadors: SubAmbassador[];
-}
-
-const ambassadors: AmbassadorData = {
-  educraft_whatsapp: "2347063421088",
-
-   slots: {
-    "001": { name: "Admins",          school: "Admin", status: "active" },
-    "002": { name: "Noruwosa Zoe",    school: "UNIBEN",      status: "active" },
-    "003": { name: "Cassandra",       school: "DELSU",       status: "active" },
-    "004": { name: "Marong",          school: "EUI",         status: "active" },
-    "005": { name: "Chidinma",        school: "EUI",         status: "active" },
-    "006": { name: "Debby",           school: "EUI",         status: "active" },
-    "007": { name: "Osheho",          school: "EUI",         status: "active" },
-    "008": { name: "Ayomidele",       school: "UNIBEN",      status: "active" },
-    "009": { name: "Goodness",        school: "EUI",         status: "active" },
-    "010": { name: "Ib Nation",       school: "EUI",         status: "active" },
-    "011": { name: "Fortune",         school: "EUI",         status: "active" },
-    "012": { name: "Obehi",           school: "EUI",         status: "active" },
-    "013": { name: "Princewill",      school: "EUI",         status: "active" },
-    "014": { name: "Sultan",          school: "EUI",         status: "active" },
-    "015": { name: "Taiwo",           school: "EUI",         status: "active" },
-    "016": { name: "Aisosa (MLS)",    school: "EUI",         status: "active" },
-    "017": { name: "JVS",             school: "BRAND",       status: "active" },
-    "018": { name: "Dr Abel",         school: "EUI",         status: "active" },
-    "019": { name: "Emma",            school: "EUI",         status: "active"  },
-    "020": { name: "Oyewole",         school: "EUI",         status: "active"  },
-    "021": { name: "Blaq",            school: "EUI",         status: "active"  },
-    "022": { name: "Blue Chief",      school: "EUI",         status: "active" },
-    "023": { name: "Promzex",         school: "EUI",         status: "active" },
-    "024": { name: "Confidence",      school: "EUI",         status: "active" },
-    "025": { name: "Fredrick",        school: "EUI",         status: "active" },
-    "026": { name: "Esosa",           school: "PG",          status: "active" },
-    "027": { name: "David English",   school: "EUI",         status: "active" },
-    "028": { name: "Chibuzor",        school: "EUI",         status: "active" },
-    "029": { name: "Queen Precious",  school: "EUI",         status: "active" },
-    "030": { name: "Cynthia",         school: "EUI",         status: "active" },
-    "031": { name: "Miracle",         school: "EUI",         status: "active" },
-    "032": { name: "Abdullahi",       school: "EUI",         status: "active" },
-    "033": { name: "Gift",            school: "EUI",         status: "active" },
-    "034": { name: "Doreen",          school: "EUI",         status: "active" },
-    "035": { name: "David Salam",     school: "EUI",         status: "active" },
-    "036": { name: "", school: "EUI",         status: "vacant" },
-    "037": { name: "Ifekristi",       school: "UNILAG",   status: "active" },
-    "038": { name: "Victory Teshua",  school: "EUI",         status: "active" },
-    "039": { name: "Collins",         school: "EUI",         status: "active" },
-    "040": { name: "Favy",   school: "EUI",         status: "active" },
-    "041": { name: "Deborah",         school: "EUI",         status: "active" },
-    "042": { name: "Aisosa",          school: "EUI",         status: "active" },
-    "043": { name: "Engine Boy",      school: "UNIBEN",      status: "active" },
-    "044": { name: "Adenike",         school: "UNIBEN",      status: "active" },
-    "045": { name: "Precious",        school: "EUI",         status: "active" },
-    "046": { name: "Ayo (Bridget)",   school: "EUI",         status: "active" },
-    "047": { name: "Raqeeb",          school: "EUI",         status: "active" },
-    "048": { name: "Michael",         school: "EUI",         status: "active" },
-    "049": { name: "Maro",                school: "EUI",         status: "active"  },
-    "050": { name: "Joshua (COE)",    school: "EUI",         status: "active" },
-    "051": { name: "",                school: "EUI",         status: "vacant"  },
-    "052": { name: "",                school: "EUI",         status: "vacant"  },
-    "053": { name: "",                school: "EUI",         status: "vacant"  },
-    "054": { name: "",                school: "EUI",         status: "vacant"  },
-    "055": { name: "",                school: "EUI",         status: "vacant"  },
-    "056": { name: "",                school: "EUI",         status: "vacant"  },
-    "057": { name: "",                school: "EUI",         status: "vacant"  },
-    "058": { name: "",                school: "EUI",         status: "vacant"  },
-    "059": { name: "",                school: "EUI",         status: "vacant"  },
-    "060": { name: "",                school: "EUI",         status: "vacant"  },
+export interface AmbassadorSlot{name:string;school:string;status:"active"|"vacant";}
+export interface CoreAmbassador{id:string;name:string;school:string;percentage:number;status?:"active"|"vacant";}
+export interface SubAmbassador{id:string;name:string;school:string;percentage:number;coreId:string;status?:"active"|"vacant";}
+export interface AmbassadorData{educraft_whatsapp:string;slots:Record<string,AmbassadorSlot>;coreAmbassadors:CoreAmbassador[];subAmbassadors:SubAmbassador[];}
+const ambassadors:AmbassadorData={
+  educraft_whatsapp:"2347063421088",
+  slots:{
+    "001": { name: "Admins"              , school: "Admin"       , status: "active" },
+    "002": { name: "Noruwosa Zoe"        , school: "UNIBEN"      , status: "active" },
+    "003": { name: "Cassandra"           , school: "DELSU"       , status: "active" },
+    "004": { name: "Marong"              , school: "EUI"         , status: "active" },
+    "005": { name: "Chidinma"            , school: "EUI"         , status: "active" },
+    "006": { name: "Debby"               , school: "EUI"         , status: "active" },
+    "007": { name: "Osheho"              , school: "EUI"         , status: "active" },
+    "008": { name: "Ayomidele"           , school: "UNIBEN"      , status: "active" },
+    "009": { name: "Goodness"            , school: "EUI"         , status: "active" },
+    "010": { name: "Ib Nation"           , school: "EUI"         , status: "active" },
+    "011": { name: "Fortune"             , school: "EUI"         , status: "active" },
+    "012": { name: "Obehi"               , school: "EUI"         , status: "active" },
+    "013": { name: "Princewill"          , school: "EUI"         , status: "active" },
+    "014": { name: "Sultan"              , school: "EUI"         , status: "active" },
+    "015": { name: "Taiwo"               , school: "EUI"         , status: "active" },
+    "016": { name: "Aisosa (MLS)"        , school: "EUI"         , status: "active" },
+    "017": { name: "JVS"                 , school: "BRAND"       , status: "active" },
+    "018": { name: "Dr Abel"             , school: "EUI"         , status: "active" },
+    "019": { name: "Emma"                , school: "EUI"         , status: "active" },
+    "020": { name: "Oyewole"             , school: "EUI"         , status: "active" },
+    "021": { name: "Blaq"                , school: "EUI"         , status: "active" },
+    "022": { name: "Blue Chief"          , school: "EUI"         , status: "active" },
+    "023": { name: "Promzex"             , school: "EUI"         , status: "active" },
+    "024": { name: "Confidence"          , school: "EUI"         , status: "active" },
+    "025": { name: "Fredrick"            , school: "EUI"         , status: "active" },
+    "026": { name: "Esosa"               , school: "PG"          , status: "active" },
+    "027": { name: "David English"       , school: "EUI"         , status: "active" },
+    "028": { name: "Chibuzor"            , school: "EUI"         , status: "active" },
+    "029": { name: "Queen Precious"      , school: "EUI"         , status: "active" },
+    "030": { name: "Cynthia"             , school: "EUI"         , status: "active" },
+    "031": { name: "Miracle"             , school: "EUI"         , status: "active" },
+    "032": { name: "Abdullahi"           , school: "EUI"         , status: "active" },
+    "033": { name: "Gift"                , school: "EUI"         , status: "active" },
+    "034": { name: "Doreen"              , school: "EUI"         , status: "active" },
+    "035": { name: "David Salam"         , school: "EUI"         , status: "active" },
+    "036": { name: "Testing001"          , school: "LCU"         , status: "active" },
+    "037": { name: "Ifekristi"           , school: "UNILAG"      , status: "active" },
+    "038": { name: "Victory Teshua"      , school: "EUI"         , status: "active" },
+    "039": { name: "Collins"             , school: "EUI"         , status: "active" },
+    "040": { name: "Favy"                , school: "EUI"         , status: "active" },
+    "041": { name: "Deborah"             , school: "EUI"         , status: "active" },
+    "042": { name: "Aisosa"              , school: "EUI"         , status: "active" },
+    "043": { name: "Engine Boy"          , school: "UNIBEN"      , status: "active" },
+    "044": { name: "Adenike"             , school: "UNIBEN"      , status: "active" },
+    "045": { name: "Precious"            , school: "EUI"         , status: "active" },
+    "046": { name: "Ayo (Bridget)"       , school: "EUI"         , status: "active" },
+    "047": { name: "Raqeeb"              , school: "EUI"         , status: "active" },
+    "048": { name: "Michael"             , school: "EUI"         , status: "active" },
+    "049": { name: "Maro"                , school: "EUI"         , status: "active" },
+    "050": { name: "Joshua (COE)"        , school: "EUI"         , status: "active" },
+    "051": { name: "Prince Testing"      , school: "UNIBEN"      , status: "active" },
+    "052": { name: "adsfgh"              , school: "ADSGHJKL"    , status: "vacant" },
+    "053": { name: ""                    , school: "EUI"         , status: "vacant" },
+    "054": { name: ""                    , school: "EUI"         , status: "vacant" },
+    "055": { name: ""                    , school: "EUI"         , status: "vacant" },
+    "056": { name: ""                    , school: "EUI"         , status: "vacant" },
+    "057": { name: ""                    , school: "EUI"         , status: "vacant" },
+    "058": { name: ""                    , school: "EUI"         , status: "vacant" },
+    "059": { name: ""                    , school: "EUI"         , status: "vacant" },
+    "060": { name: ""                    , school: "EUI"         , status: "vacant" },
   },
-
-  // ── Core Ambassadors (ECCA) ────────────────────────────────────────────────
-  // These are senior partners. Each earns their base % + 3% per sub they have.
-  coreAmbassadors: [
-    { id: "ECCA-001", name: "Chidinma Victory", school: "EUI",   percentage: 10 },
-    { id: "ECCA-002", name: "Debby",            school: "EUI",   percentage: 10 },
-    { id: "ECCA-003", name: "Admins",             school: "Admin",   percentage: 10 },
-    { id: "ECCA-004", name: "Zoe Grace",        school: "EUI",   percentage: 10 },
-    { id: "ECCA-005", name: "Yole",          school: "EUI", percentage: 10 },  
-    { id: "ECCA-006", name: "Marong",          school: "EUI", percentage: 10 },
+  coreAmbassadors:[
+    { id:"ECCA-001", name:"Chidinma Victory", school:"EUI", percentage:10, status:"active" },
+    { id:"ECCA-002", name:"Debby", school:"EUI", percentage:10, status:"active" },
+    { id:"ECCA-003", name:"Admins", school:"Admin", percentage:10, status:"active" },
+    { id:"ECCA-004", name:"Zoe Grace", school:"EUI", percentage:10, status:"active" },
+    { id:"ECCA-005", name:"Yole", school:"EUI", percentage:10, status:"active" },
   ],
-
-  // ── Sub-Ambassadors (ECSA) ─────────────────────────────────────────────────
-  // Each earns 5% per job. Their coreId links them to a Core Ambassador.
-  subAmbassadors: [
-    { id: "ECSA-001-001", name: "Rita",     school: "Edwin Clark", percentage: 5, coreId: "ECCA-001" },
-    { id: "ECSA-001-002", name: "Praise",   school: "SDU",         percentage: 5, coreId: "ECCA-001" },
-    { id: "ECSA-001-003", name: "Queensly", school: "EUI",         percentage: 5, coreId: "ECCA-001" },
+  subAmbassadors:[
+    { id:"ECSA-001-001", name:"Rita", school:"Edwin Clark", percentage:5, coreId:"ECCA-001", status:"active" },
+    { id:"ECSA-001-002", name:"Praise", school:"SDU", percentage:5, coreId:"ECCA-001", status:"active" },
+    { id:"ECSA-001-003", name:"Queensly", school:"EUI", percentage:5, coreId:"ECCA-001", status:"active" },
   ],
 };
-
 export default ambassadors;
