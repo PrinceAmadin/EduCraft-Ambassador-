@@ -26,6 +26,8 @@ type Deploy   = "idle" | "busy" | "ok" | "fail";
 interface Stat     { clicks: number; orders: number; email: string|null; registeredName: string|null; }
 interface TRow     { id: string; name: string; school: string; kind: "general"|"core"|"sub"; stat: Stat; }
 interface Pending  { slotId: string; name: string; school: string; email: string; registeredAt: string; }
+interface SyncProfile { name: string; school: string; email?: string; }
+interface SyncData { profiles: Record<string, SyncProfile>; payments: Record<string, Record<string,string>>; }
 
 const SCHOOL: Record<string,string> = {
   EUI:"Edo State University",UNIBEN:"University of Benin",DELSU:"Delta State University",
@@ -41,9 +43,9 @@ const lsSet=(k:string,v:unknown)=>{try{localStorage.setItem(k,JSON.stringify(v))
 // ── Code generators (for GitHub deploy) ──────────────────────────────────────
 function genAmbTS(d:AmbassadorData):string{
   const sl=Object.entries(d.slots).map(([id,s])=>`    "${id}": { name: ${JSON.stringify(s.name).padEnd(22)}, school: ${JSON.stringify(s.school).padEnd(14)}, status: "${s.status}" },`).join("\n");
-  const cl=d.coreAmbassadors.map(c=>`    { id:"${c.id}", name:"${c.name}", school:"${c.school}", percentage:${c.percentage} },`).join("\n");
-  const sb=d.subAmbassadors.map(s=>`    { id:"${s.id}", name:"${s.name}", school:"${s.school}", percentage:${s.percentage}, coreId:"${s.coreId}" },`).join("\n");
-  return `// src/ambassadors.ts\nexport interface AmbassadorSlot{name:string;school:string;status:"active"|"vacant";}\nexport interface CoreAmbassador{id:string;name:string;school:string;percentage:number;}\nexport interface SubAmbassador{id:string;name:string;school:string;percentage:number;coreId:string;}\nexport interface AmbassadorData{educraft_whatsapp:string;slots:Record<string,AmbassadorSlot>;coreAmbassadors:CoreAmbassador[];subAmbassadors:SubAmbassador[];}\nconst ambassadors:AmbassadorData={\n  educraft_whatsapp:"${d.educraft_whatsapp}",\n  slots:{\n${sl}\n  },\n  coreAmbassadors:[\n${cl}\n  ],\n  subAmbassadors:[\n${sb}\n  ],\n};\nexport default ambassadors;\n`;
+  const cl=d.coreAmbassadors.map(c=>`    { id:"${c.id}", name:"${c.name}", school:"${c.school}", percentage:${c.percentage}, status:"${c.status??"active"}" },`).join("\n");
+  const sb=d.subAmbassadors.map(s=>`    { id:"${s.id}", name:"${s.name}", school:"${s.school}", percentage:${s.percentage}, coreId:"${s.coreId}", status:"${s.status??"active"}" },`).join("\n");
+  return `// src/ambassadors.ts\nexport interface AmbassadorSlot{name:string;school:string;status:"active"|"vacant";}\nexport interface CoreAmbassador{id:string;name:string;school:string;percentage:number;status?:"active"|"vacant";}\nexport interface SubAmbassador{id:string;name:string;school:string;percentage:number;coreId:string;status?:"active"|"vacant";}\nexport interface AmbassadorData{educraft_whatsapp:string;slots:Record<string,AmbassadorSlot>;coreAmbassadors:CoreAmbassador[];subAmbassadors:SubAmbassador[];}\nconst ambassadors:AmbassadorData={\n  educraft_whatsapp:"${d.educraft_whatsapp}",\n  slots:{\n${sl}\n  },\n  coreAmbassadors:[\n${cl}\n  ],\n  subAmbassadors:[\n${sb}\n  ],\n};\nexport default ambassadors;\n`;
 }
 
 async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<void>{
@@ -96,63 +98,6 @@ export default function AdminDashboard(){
     return()=>{window.removeEventListener("resize",hr);window.removeEventListener("scroll",hs);};
   },[]);
 
-  // Payment records
-  interface PaymentRecord { slotId:string;name:string;bankName:string;accountNumber:string;accountName:string;email?:string;phone?:string;universityFull?:string;universityAbbr?:string;approvedAt?:string;updatedAt?:string; }
-  const[paymentRecords,setPaymentRecords]=useState<PaymentRecord[]>([]);
-
-  // ── Secret / auth ────────────────────────────────────────────────────────────
-  const[secret,setSecretRaw]=useState<string>(()=>lsGet(LS_S)??"");
-  const setAdminSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
-  const[tempSecret,setTempSecret]=useState("");
-  const[settOpen,setSettOpen]=useState(false);
-
-  // Startup sync: fetch approved ambassadors from Redis and merge into liveData.
-  // This ensures any device (mobile, laptop) shows newly approved ambassadors
-  // without needing a GitHub deploy or page-specific localStorage.
-  useEffect(()=>{
-    if(!secret)return; // wait until secret is entered on this device
-    fetch(`/api/admin?action=sync-data&secret=${encodeURIComponent(secret)}`)
-      .then(r=>r.ok?r.json():null)
-      .then((d:{profiles:Record<string,{name:string;school:string;email?:string}>;payments:Record<string,Record<string,string>>}|null)=>{
-        if(!d||!d.profiles)return;
-        // Merge approved profiles into slots
-        setDataRaw(prev=>{
-          const merged={...prev.slots};
-          let changed=false;
-          Object.entries(d.profiles).forEach(([id,profile])=>{
-            const existing=merged[id];
-            // Update if: slot doesn't exist, is vacant, or has no name
-            if(!existing||existing.status==="vacant"||!existing.name){
-              merged[id]={name:profile.name||existing?.name||"",school:profile.school||existing?.school||"",status:"active" as const};
-              changed=true;
-            }
-          });
-          if(!changed)return prev;
-          const next={...prev,slots:merged};
-          lsSet(LS_D,next);
-          return next;
-        });
-        // Merge payment records
-        if(d.payments&&Object.keys(d.payments).length>0){
-          setPaymentRecords(Object.values(d.payments).map(v=>v as unknown as PaymentRecord));
-        }
-        // Update tracking stats with registered names/emails
-        setStats((prev:Record<string,Stat>)=>{
-          const next={...prev};
-          Object.entries(d.profiles).forEach(([id,profile])=>{
-            next[id]={
-              clicks:prev[id]?.clicks??0,
-              orders:prev[id]?.orders??0,
-              email:(d.profiles[id] as {email?:string;name:string;school:string}).email??prev[id]?.email??null,
-              registeredName:profile.name??prev[id]?.registeredName??null,
-            };
-          });
-          return next;
-        });
-      })
-      .catch(()=>{/* sync failure is silent — stale data is fine */});
-  },[secret]); // re-runs when admin secret is entered
-
   // ── Manage ───────────────────────────────────────────────────────────────────
   const[editId,setEditId]=useState<string|null>(null);
   const[editName,setEditName]=useState("");const[editSchool,setEditSchool]=useState("");const[editSt,setEditSt]=useState<"active"|"vacant">("active");
@@ -182,6 +127,10 @@ export default function AdminDashboard(){
   // ── Tracking ─────────────────────────────────────────────────────────────────
   const[stats,setStats]=useState<Record<string,Stat>>({});
   const[sLoad,setSLoad]=useState(false);const[sErr,setSErr]=useState("");
+  const[secret,setSecretRaw]=useState<string>(()=>lsGet(LS_S)??"");
+  const setAdminSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
+  const[tempSecret,setTempSecret]=useState("");
+  const[settOpen,setSettOpen]=useState(false);
   const[tSearch,setTSearch]=useState("");
 
   // Pending
@@ -230,7 +179,9 @@ export default function AdminDashboard(){
   // Reset slot registration
   const[resetId,setResetId]=useState<string|null>(null);
 
-  // Payment records (interface & state declared above, before sync useEffect)
+  // Payment records
+  interface PaymentRecord { slotId:string;name:string;bankName:string;accountNumber:string;accountName:string;email?:string;phone?:string;universityFull?:string;universityAbbr?:string;approvedAt?:string;updatedAt?:string; }
+  const[paymentRecords,setPaymentRecords]=useState<PaymentRecord[]>([]);
   const[payLoading,setPayLoading]=useState(false);
   const[editPayId,setEditPayId]=useState<string|null>(null);
   const[payForm,setPayForm]=useState<Partial<PaymentRecord>>({});
@@ -240,6 +191,49 @@ export default function AdminDashboard(){
   const[resetMsg,setResetMsg]=useState("");
 
   // Auto-fetch when Tracking tab opens
+  // Startup sync — secret is declared above so no hoisting issue
+  useEffect(()=>{
+    if(!secret)return;
+    const doSync=async()=>{
+      try{
+        const r=await fetch(`/api/admin?action=sync-data&secret=${encodeURIComponent(secret)}`);
+        if(!r.ok)return;
+        const d=await r.json() as SyncData;
+        if(!d?.profiles)return;
+        // Merge approved profiles into slots
+        setDataRaw((prev:AmbassadorData)=>{
+          const merged:Record<string,AmbassadorSlot>={...prev.slots};
+          let changed=false;
+          Object.keys(d.profiles).forEach(id=>{
+            const profile:SyncProfile=d.profiles[id];
+            const existing=merged[id];
+            if(!existing||existing.status==="vacant"||!existing.name){
+              merged[id]={name:profile.name||existing?.name||"",school:profile.school||existing?.school||"",status:"active" as const};
+              changed=true;
+            }
+          });
+          if(!changed)return prev;
+          const next:AmbassadorData={...prev,slots:merged};
+          lsSet(LS_D,next);
+          return next;
+        });
+        // Merge payment records
+        if(d.payments&&Object.keys(d.payments).length>0){
+          setPaymentRecords(Object.values(d.payments).map(v=>v as unknown as PaymentRecord));
+        }
+        // Update tracking stats
+        setStats((prev:Record<string,Stat>)=>{
+          const next:Record<string,Stat>={...prev};
+          Object.keys(d.profiles).forEach(id=>{
+            const p:SyncProfile=d.profiles[id];
+            next[id]={clicks:prev[id]?.clicks??0,orders:prev[id]?.orders??0,email:p.email??prev[id]?.email??null,registeredName:p.name??prev[id]?.registeredName??null};
+          });
+          return next;
+        });
+      }catch{/* silent */}
+    };
+    void doSync();
+  },[secret]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(()=>{
     if(tab==="tracking"){loadStats();loadPending();}
     if(tab==="applications"){loadApplications();}

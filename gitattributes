@@ -1,0 +1,2 @@
+# Prevent GitHub deploys from overwriting local ambassadors.ts during git pull
+src/ambassadors.ts merge=ours
