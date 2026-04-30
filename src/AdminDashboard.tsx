@@ -60,25 +60,22 @@ function genSlotsBlock(d:AmbassadorData):string{
   return `const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {\n${lines}\n};`;
 }
 
-async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<string>{
-  // Returns the new commit SHA so Vercel polling can match the exact deployment.
+// Returns the Unix-ms timestamp recorded just before the push so the Vercel
+// poller can ignore any deployment that was created before this moment.
+async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<number>{
+  const pushedAt=Date.now();
   const h={"Authorization":`token ${token}`,"Accept":"application/vnd.github.v3+json","Content-Type":"application/json"};
   const base=`https://api.github.com/repos/${owner}/${repo}/contents`;
   const b64=(s:string)=>btoa(unescape(encodeURIComponent(s)));
   const getFile=async(p:string)=>{const r=await fetch(`${base}/${p}`,{headers:h});if(!r.ok)throw new Error(`Cannot read ${p} in repo`);const j=await r.json();return{sha:j.sha as string,content:atob((j.content as string).replace(/\n/g,""))};};
-  const put=async(p:string,c:string,s:string):Promise<string>=>{
-    const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"EduCraft Admin deploy",content:b64(c),sha:s})});
-    if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}
-    const j=await r.json();
-    return(j?.commit?.sha as string)??"";
-  };
+  const put=async(p:string,c:string,s:string)=>{const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"EduCraft Admin deploy",content:b64(c),sha:s})});if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}};
 
   log("Connecting to GitHub…");
 
-  // 1. Update ambassadors.ts — capture the commit SHA for Vercel polling
+  // 1. Update ambassadors.ts
   const {sha:aS}=await getFile("src/ambassadors.ts");
   log("Updating src/ambassadors.ts…");
-  const commitSha=await put("src/ambassadors.ts",genAmbTS(data),aS);
+  await put("src/ambassadors.ts",genAmbTS(data),aS);
 
   // 2. Update SLOTS block inside api/redirect.ts
   log("Updating api/redirect.ts…");
@@ -90,7 +87,7 @@ async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,
   await put("api/redirect.ts",newRedirect,rS);
 
   log("Both files pushed to GitHub.");
-  return commitSha;
+  return pushedAt;
 }
 
 function nextId(slots:Record<string,AmbassadorSlot>):string{
@@ -653,80 +650,112 @@ export default function AdminDashboard(){
     if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}
     setDep("busy");setDepMsg("Starting…");setVercelState("pushing");setVercelMsg("Pushing files to GitHub…");
     try{
-      const commitSha=await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);
+      // pushedAt is recorded BEFORE the push so we can ignore older deployments
+      const pushedAt=await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);
       setDep("ok");
 
-      // ── Vercel polling ────────────────────────────────────────────────────
       if(gh.vercelToken&&gh.vercelProject){
         setVercelState("queued");
-        setVercelMsg("GitHub push complete. Waiting for Vercel to pick up the commit…");
+        setVercelMsg("GitHub push complete. Waiting for Vercel to pick up the build…");
 
-        // We poll /v6/deployments and match by commit SHA to avoid catching
-        // a stale deployment that was already READY before we pushed.
+        // ── Polling strategy ──────────────────────────────────────────────────
+        // We fetch the latest deployments for the exact project name the user
+        // typed, then filter to only deployments whose createdAt >= pushedAt.
+        // This correctly handles:
+        //   • Two Vercel projects with similar names (e.g. educraft-ambassador vs
+        //     edu-craft-ambassador) — we only look at the one in the settings field.
+        //   • A CANCELED state on an older deployment being misread as our failure.
+        //   • Vercel not attaching githubCommitSha (common with content-API pushes).
         let attempts=0;
-        const maxAttempts=50; // 50 × ~4s = ~3.5 minutes max
+        const maxAttempts=50; // 50 × 4s ≈ 3.5 min
 
         const poll=async()=>{
           attempts++;
           try{
-            const url=`https://api.vercel.com/v6/deployments?app=${encodeURIComponent(gh.vercelProject)}&limit=5`;
-            const r=await fetch(url,{headers:{Authorization:`Bearer ${gh.vercelToken}`}});
+            // Use projectSlug (exact name) + limit=5 so we catch the new one fast
+            const url=`https://api.vercel.com/v6/deployments?app=${encodeURIComponent(gh.vercelProject.trim())}&limit=5`;
+            const r=await fetch(url,{headers:{Authorization:`Bearer ${gh.vercelToken.trim()}`}});
+
             if(!r.ok){
+              // 401 = bad token, 404 = wrong project name
+              const errBody=await r.json().catch(()=>({})) as Record<string,unknown>;
+              const hint=r.status===401?"Check your Vercel token in settings.":r.status===404?`Project "${gh.vercelProject}" not found — check the project name in settings.`:"Vercel API error.";
               setVercelState("error");
-              setVercelMsg("Vercel API returned an error. Check your Vercel token in settings.");
+              setVercelMsg(`${hint} (HTTP ${r.status}${errBody.error?(": "+String((errBody.error as Record<string,string>).message||"")):""})` );
               return;
             }
-            const d2=await r.json();
-            const list:(Record<string,unknown>)[]=d2.deployments??[];
 
-            // Find the deployment that matches OUR commit SHA.
-            // Fall back to latest if SHA is missing (edge case).
-            const match=commitSha
-              ? list.find(dep=>(dep.meta as Record<string,string>|undefined)?.githubCommitSha===commitSha)
-              : list[0];
+            const d2=await r.json() as {deployments?:Record<string,unknown>[]};
+            const list=d2.deployments??[];
 
-            if(!match){
-              // Vercel hasn't picked up the commit yet — keep waiting
+            // Only consider deployments created at or after our push
+            const ours=list.filter(dep=>{
+              const created=typeof dep.createdAt==="number"?dep.createdAt:parseInt(String(dep.createdAt??"0"),10);
+              return created>=pushedAt-5000; // 5s grace for clock skew
+            });
+
+            if(ours.length===0){
+              // Vercel hasn’t created the deployment yet — keep waiting
               if(attempts<maxAttempts)setTimeout(poll,4000);
-              else{setVercelState("error");setVercelMsg("Timed out waiting for Vercel to start the build. Check Vercel dashboard.");}
+              else{setVercelState("error");setVercelMsg("Timed out waiting for Vercel to start the build. The files were pushed to GitHub successfully — check the Vercel dashboard.");}
               return;
             }
 
-            const st:string=(match.state??"") as string;
+            // Pick the most recent matching deployment
+            const dep=ours[0];
+            const st:string=(dep.state??"") as string;
 
             if(st==="READY"){
               setVercelState("ready");
-              setVercelMsg("Build complete. Changes are live on Vercel.");
-            }else if(st==="ERROR"||st==="CANCELED"){
+              setVercelMsg("Build complete — your changes are live.");
+            }else if(st==="ERROR"){
               setVercelState("error");
-              setVercelMsg(`Vercel build ${st.toLowerCase()}. Open the Vercel dashboard for the full error log.`);
+              setVercelMsg("Vercel build failed. Open the Vercel dashboard → Logs for the full error.");
+            }else if(st==="CANCELED"){
+              // CANCELED usually means Vercel auto-cancelled a duplicate; a newer
+              // deployment of the same commit is likely already READY.
+              // Check if a newer one in the list is READY before reporting error.
+              const newerReady=list.find(d=>{
+                const created=typeof d.createdAt==="number"?d.createdAt:parseInt(String(d.createdAt??"0"),10);
+                return created>=pushedAt-5000&&(d.state as string)==="READY";
+              });
+              if(newerReady){
+                setVercelState("ready");
+                setVercelMsg("Build complete — your changes are live.");
+              }else{
+                // Truly canceled — keep polling for a sibling deployment
+                if(attempts<maxAttempts)setTimeout(poll,4000);
+              }
             }else{
-              // BUILDING | INITIALIZING | QUEUED
+              // BUILDING | INITIALIZING | QUEUED — still in progress
               const stateMap:Record<string,VercelState>={BUILDING:"building",INITIALIZING:"building",QUEUED:"queued"};
-              const msgMap:Record<string,string>={BUILDING:"Vercel is building the project…",INITIALIZING:"Vercel is initializing the build…",QUEUED:"Build queued on Vercel…"};
+              const msgMap:Record<string,string>={
+                BUILDING:"Vercel is building the project…",
+                INITIALIZING:"Vercel is initializing the build environment…",
+                QUEUED:"Build is queued on Vercel…",
+              };
               setVercelState(stateMap[st]??"building");
               setVercelMsg(msgMap[st]??`Vercel status: ${st}…`);
               if(attempts<maxAttempts)setTimeout(poll,4000);
             }
           }catch{
-            // Network blip — retry silently
             if(attempts<maxAttempts)setTimeout(poll,5000);
           }
         };
 
-        // Wait 8 s for the GitHub→Vercel webhook to fire before first poll
+        // Wait 8s for the GitHub push to register as a new Vercel deployment
         setTimeout(poll,8000);
 
       }else{
-        // No Vercel token — show an honest amber "pending" state, not a false green
+        // No Vercel token — honest amber state, not false green
         setVercelState("queued");
-        setVercelMsg("Pushed to GitHub. Vercel will rebuild automatically (usually ~30s). Add a Vercel Token in GitHub settings to see live build status here.");
+        setVercelMsg("Pushed to GitHub successfully. Vercel will rebuild automatically (usually ~30s). Add a Vercel Token in GitHub settings to track live build status here.");
       }
     }catch(e){
       setDep("fail");
       setDepMsg((e as Error).message);
       setVercelState("error");
-      setVercelMsg("Push to GitHub failed. Check your GitHub token and repo settings.");
+      setVercelMsg("Push to GitHub failed. Check your GitHub token and repo name in settings.");
     }
   };
 
