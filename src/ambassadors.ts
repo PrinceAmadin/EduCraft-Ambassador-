@@ -102,7 +102,8 @@ const ambassadors: AmbassadorData = {
     { id: "ECCA-002", name: "Debby",            school: "EUI",   percentage: 10 },
     { id: "ECCA-003", name: "Admins",             school: "Admin",   percentage: 10 },
     { id: "ECCA-004", name: "Zoe Grace",        school: "EUI",   percentage: 10 },
-    { id: "ECCA-005", name: "Yole",          school: "EUI", percentage: 10 },
+    { id: "ECCA-005", name: "Yole",          school: "EUI", percentage: 10 },  
+    { id: "ECCA-006", name: "Marong",          school: "EUI", percentage: 10 },
   ],
 
   // ── Sub-Ambassadors (ECSA) ─────────────────────────────────────────────────
