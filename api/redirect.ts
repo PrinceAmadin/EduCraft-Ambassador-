@@ -1,6 +1,6 @@
 // api/redirect.ts
 // Tracks EVERY click via Redis INCR then immediately redirects.
-// Click counter increments on every request â even repeated ones from the same person.
+// Click counter increments on every request Ã¢ÂÂ even repeated ones from the same person.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "redis";
@@ -85,7 +85,7 @@ const SUB: Record<string, { name: string; school: string; coreId: string }> = {
   "ECSA-001-003": { name: "Queensly", school: "EUI",         coreId: "ECCA-001" },
 };
 
-// Fire-and-forget click tracking â NEVER blocks or throws to the redirect
+// Fire-and-forget click tracking Ã¢ÂÂ NEVER blocks or throws to the redirect
 async function trackClick(id: string): Promise<void> {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) return;
@@ -93,7 +93,7 @@ async function trackClick(id: string): Promise<void> {
     const client = createClient({ url: redisUrl });
     client.on("error", () => {});
     await client.connect();
-    // INCR adds 1 every single time this runs â every click counts
+    // INCR adds 1 every single time this runs Ã¢ÂÂ every click counts
     await client.multi()
       .incr(`clicks:${id}`)
       .sAdd("ambassador_ids", id)
@@ -107,22 +107,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const type = req.query.type as string | undefined;
 
   if (!id) {
-    res.status(400).send(errPage("â Invalid Link", "No ambassador ID was provided."));
+    res.status(400).send(errPage("Ã¢ÂÂ Invalid Link", "No ambassador ID was provided."));
     return;
   }
 
-  // ââ ECCA (Core Ambassador recruitment link) ââââââââââââââââââââââââââââââââ
+  // Ã¢ÂÂÃ¢ÂÂ ECCA (Core Ambassador recruitment link) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   if (type === "ecca") {
     const core = CORE[id];
-    if (!core) { res.status(404).send(errPage("â Not Found", "This Core Ambassador link does not exist.")); return; }
+    if (!core) { res.status(404).send(errPage("Ã¢ÂÂ Not Found", "This Core Ambassador link does not exist.")); return; }
     void trackClick(id); // fire-and-forget
-    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was brought in by ${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. ð`)}`);
+    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was brought in by ${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. Ã°ÂÂÂ`)}`);
     return;
   }
 
-  // ââ ECSA (Sub-Ambassador client referral link) âââââââââââââââââââââââââââââ
-  // URL format: /ECSA/-001-001  â  id = "-001-001"
-  // Internal key format: "ECSA-001-001" â prepend "ECSA" to resolve
+  // Ã¢ÂÂÃ¢ÂÂ ECSA (Sub-Ambassador client referral link) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+  // URL format: /ECSA/-001-001  Ã¢ÂÂ  id = "-001-001"
+  // Internal key format: "ECSA-001-001" Ã¢ÂÂ prepend "ECSA" to resolve
   if (type === "ecsa") {
     const fullId = id.startsWith("ECSA") ? id : `ECSA${id}`;
     const sub = SUB[fullId];
@@ -133,10 +133,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  // ââ General Ambassador (client referral link) ââââââââââââââââââââââââââââââ
+  // Ã¢ÂÂÃ¢ÂÂ General Ambassador (client referral link) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   const slot = SLOTS[id];
 
-  // Always check Redis first for an approved profile â this takes precedence over the static file.
+  // Always check Redis first for an approved profile Ã¢ÂÂ this takes precedence over the static file.
   // Reason: when an ambassador is approved via the application form, they are in Redis but their
   // static slot entry may still show as vacant/unnamed. Redis is the source of truth.
   const redisUrl = process.env.REDIS_URL;
@@ -161,9 +161,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     } catch { /* fall through to static slot */ }
   }
 
-  // No Redis profile â use static SLOTS list
+  // No Redis profile Ã¢ÂÂ use static SLOTS list
   if (!slot) {
-    res.status(404).send(errPage("â Not Found", "This ambassador link does not exist. Please contact EduCraft."));
+    res.status(404).send(errPage("Ã¢ÂÂ Not Found", "This ambassador link does not exist. Please contact EduCraft."));
     return;
   }
 
@@ -182,6 +182,6 @@ function errPage(title: string, body: string): string {
 .card{background:#fff;border:2px solid #E0B846;border-radius:16px;padding:48px 40px;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(13,87,83,.10)}
 .icon{font-size:2.5rem;margin-bottom:16px}h1{font-size:1.3rem;margin-bottom:12px;color:#ef4444}p{color:#0D5753;line-height:1.6;font-size:.95rem}
 .brand{margin-top:24px;font-size:.75rem;color:#12827c;font-weight:700;letter-spacing:.05em}</style></head>
-<body><div class="card"><div class="icon">ð</div><h1>${title}</h1><p>${body}</p>
-<div class="brand">EDUCRAFT â Academic &amp; Technical Documentation Experts</div></div></body></html>`;
+<body><div class="card"><div class="icon">Ã°ÂÂÂ</div><h1>${title}</h1><p>${body}</p>
+<div class="brand">EDUCRAFT Ã¢ÂÂ Academic &amp; Technical Documentation Experts</div></div></body></html>`;
 }
