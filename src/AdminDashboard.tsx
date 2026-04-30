@@ -60,19 +60,25 @@ function genSlotsBlock(d:AmbassadorData):string{
   return `const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {\n${lines}\n};`;
 }
 
-async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<void>{
+async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<string>{
+  // Returns the new commit SHA so Vercel polling can match the exact deployment.
   const h={"Authorization":`token ${token}`,"Accept":"application/vnd.github.v3+json","Content-Type":"application/json"};
   const base=`https://api.github.com/repos/${owner}/${repo}/contents`;
   const b64=(s:string)=>btoa(unescape(encodeURIComponent(s)));
   const getFile=async(p:string)=>{const r=await fetch(`${base}/${p}`,{headers:h});if(!r.ok)throw new Error(`Cannot read ${p} in repo`);const j=await r.json();return{sha:j.sha as string,content:atob((j.content as string).replace(/\n/g,""))};};
-  const put=async(p:string,c:string,s:string)=>{const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"EduCraft Admin deploy",content:b64(c),sha:s})});if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}};
+  const put=async(p:string,c:string,s:string):Promise<string>=>{
+    const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"EduCraft Admin deploy",content:b64(c),sha:s})});
+    if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}
+    const j=await r.json();
+    return(j?.commit?.sha as string)??"";
+  };
 
   log("Connecting to GitHub…");
 
-  // 1. Update ambassadors.ts
+  // 1. Update ambassadors.ts — capture the commit SHA for Vercel polling
   const {sha:aS}=await getFile("src/ambassadors.ts");
   log("Updating src/ambassadors.ts…");
-  await put("src/ambassadors.ts",genAmbTS(data),aS);
+  const commitSha=await put("src/ambassadors.ts",genAmbTS(data),aS);
 
   // 2. Update SLOTS block inside api/redirect.ts
   log("Updating api/redirect.ts…");
@@ -83,8 +89,8 @@ async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,
   const newRedirect=rContent.substring(0,slotsStart)+genSlotsBlock(data)+rContent.substring(slotsEnd);
   await put("api/redirect.ts",newRedirect,rS);
 
-  log("Both files pushed to GitHub. Vercel is rebuilding now.");
-  log("Monitor: https://vercel.com/dashboard → educraft-ambassador → Deployments");
+  log("Both files pushed to GitHub.");
+  return commitSha;
 }
 
 function nextId(slots:Record<string,AmbassadorSlot>):string{
@@ -146,9 +152,13 @@ export default function AdminDashboard(){
   // Edit Sub Ambassador state
   const[editSubId,setEditSubId]=useState<string|null>(null);
   const[esName,setEsName]=useState("");const[esSchool,setEsSchool]=useState("");const[esCoreId,setEsCoreId]=useState("");const[esStatus,setEsStatus]=useState<"active"|"vacant">("active");const[esErr,setEsErr]=useState("");
-  const[gh,setGhRaw]=useState<{owner:string;repo:string;token:string}>(()=>lsGet(LS_G)??{owner:"",repo:"",token:""});
+  const[gh,setGhRaw]=useState<{owner:string;repo:string;token:string;vercelToken:string;vercelProject:string}>(()=>lsGet(LS_G)??{owner:"",repo:"",token:"",vercelToken:"",vercelProject:"educraft-ambassador"});
   const setGh=(v:typeof gh)=>{setGhRaw(v);lsSet(LS_G,v);};
   const[dep,setDep]=useState<Deploy>("idle");const[depMsg,setDepMsg]=useState("");const[ghOpen,setGhOpen]=useState(false);
+  // Vercel live status
+  type VercelState="idle"|"pushing"|"queued"|"building"|"ready"|"error";
+  const[vercelState,setVercelState]=useState<VercelState>("idle");
+  const[vercelMsg,setVercelMsg]=useState("");
 
   // ── Tracking ─────────────────────────────────────────────────────────────────
   const[stats,setStats]=useState<Record<string,Stat>>({});
@@ -639,7 +649,86 @@ export default function AdminDashboard(){
     setEditSubId(null);setEsErr("");
   };
 
-  const doDeploy=async()=>{if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}setDep("busy");setDepMsg("Starting…");try{await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);setDep("ok");}catch(e){setDep("fail");setDepMsg(`❌ ${(e as Error).message}`);}};
+  const doDeploy=async()=>{
+    if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}
+    setDep("busy");setDepMsg("Starting…");setVercelState("pushing");setVercelMsg("Pushing files to GitHub…");
+    try{
+      const commitSha=await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);
+      setDep("ok");
+
+      // ── Vercel polling ────────────────────────────────────────────────────
+      if(gh.vercelToken&&gh.vercelProject){
+        setVercelState("queued");
+        setVercelMsg("GitHub push complete. Waiting for Vercel to pick up the commit…");
+
+        // We poll /v6/deployments and match by commit SHA to avoid catching
+        // a stale deployment that was already READY before we pushed.
+        let attempts=0;
+        const maxAttempts=50; // 50 × ~4s = ~3.5 minutes max
+
+        const poll=async()=>{
+          attempts++;
+          try{
+            const url=`https://api.vercel.com/v6/deployments?app=${encodeURIComponent(gh.vercelProject)}&limit=5`;
+            const r=await fetch(url,{headers:{Authorization:`Bearer ${gh.vercelToken}`}});
+            if(!r.ok){
+              setVercelState("error");
+              setVercelMsg("Vercel API returned an error. Check your Vercel token in settings.");
+              return;
+            }
+            const d2=await r.json();
+            const list:(Record<string,unknown>)[]=d2.deployments??[];
+
+            // Find the deployment that matches OUR commit SHA.
+            // Fall back to latest if SHA is missing (edge case).
+            const match=commitSha
+              ? list.find(dep=>(dep.meta as Record<string,string>|undefined)?.githubCommitSha===commitSha)
+              : list[0];
+
+            if(!match){
+              // Vercel hasn't picked up the commit yet — keep waiting
+              if(attempts<maxAttempts)setTimeout(poll,4000);
+              else{setVercelState("error");setVercelMsg("Timed out waiting for Vercel to start the build. Check Vercel dashboard.");}
+              return;
+            }
+
+            const st:string=(match.state??"") as string;
+
+            if(st==="READY"){
+              setVercelState("ready");
+              setVercelMsg("Build complete. Changes are live on Vercel.");
+            }else if(st==="ERROR"||st==="CANCELED"){
+              setVercelState("error");
+              setVercelMsg(`Vercel build ${st.toLowerCase()}. Open the Vercel dashboard for the full error log.`);
+            }else{
+              // BUILDING | INITIALIZING | QUEUED
+              const stateMap:Record<string,VercelState>={BUILDING:"building",INITIALIZING:"building",QUEUED:"queued"};
+              const msgMap:Record<string,string>={BUILDING:"Vercel is building the project…",INITIALIZING:"Vercel is initializing the build…",QUEUED:"Build queued on Vercel…"};
+              setVercelState(stateMap[st]??"building");
+              setVercelMsg(msgMap[st]??`Vercel status: ${st}…`);
+              if(attempts<maxAttempts)setTimeout(poll,4000);
+            }
+          }catch{
+            // Network blip — retry silently
+            if(attempts<maxAttempts)setTimeout(poll,5000);
+          }
+        };
+
+        // Wait 8 s for the GitHub→Vercel webhook to fire before first poll
+        setTimeout(poll,8000);
+
+      }else{
+        // No Vercel token — show an honest amber "pending" state, not a false green
+        setVercelState("queued");
+        setVercelMsg("Pushed to GitHub. Vercel will rebuild automatically (usually ~30s). Add a Vercel Token in GitHub settings to see live build status here.");
+      }
+    }catch(e){
+      setDep("fail");
+      setDepMsg((e as Error).message);
+      setVercelState("error");
+      setVercelMsg("Push to GitHub failed. Check your GitHub token and repo settings.");
+    }
+  };
 
   // Nav tabs
   const navTabs:{key:TabId;label:string}[]=[
@@ -1161,24 +1250,117 @@ export default function AdminDashboard(){
           <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap" as const,alignItems:"center"}}>
             <input style={{...s.search,maxWidth:260}} placeholder="Search slots…" value={mSearch} onChange={e=>setMSearch(e.target.value)}/>
             <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{setNewId(nextId(data.slots));setNewName("");setNewSchool("");setNewSt("active");setAddErr("");setAddOpen(true);}}>Add Ambassador</button>
-            <button style={{...s.actBtn,background:dep==="ok"?C.green:dep==="fail"?C.red:C.greenDark,color:C.yellow,marginLeft:"auto",opacity:dep==="busy"?0.7:1}} onClick={doDeploy} disabled={dep==="busy"}>
-              {dep==="busy"?"Deploying…":dep==="ok"?"Deployed":dep==="fail"?"Retry Deploy":"Deploy to GitHub"}
+            <button
+              style={{...s.actBtn,marginLeft:"auto",color:C.yellow,
+                background:dep==="ok"&&vercelState==="ready"?C.green:dep==="fail"||vercelState==="error"?C.red:dep==="busy"||vercelState==="building"||vercelState==="queued"||vercelState==="pushing"?"#2563eb":C.greenDark,
+                opacity:dep==="busy"?0.8:1}}
+              onClick={doDeploy} disabled={dep==="busy"}>
+              {dep==="busy"?"Deploying…":dep==="ok"&&vercelState==="ready"?"Live on Vercel":dep==="fail"?"Retry":"Deploy to GitHub"}
             </button>
           </div>
-          {depMsg&&<div style={{...s.banner,borderColor:dep==="fail"?C.red:C.green,background:dep==="fail"?C.redLight:C.white,color:dep==="fail"?C.red:C.greenDark,marginBottom:16}}>{depMsg}</div>}
+
+          {/* Live Vercel Status Bar */}
+          {vercelState!=="idle"&&(
+            <div style={{marginBottom:16,borderRadius:10,overflow:"hidden",border:`1.5px solid ${vercelState==="ready"?C.green:vercelState==="error"?C.red:vercelState==="building"?"#2563eb":"#E0B846"}`}}>
+              {/* Progress header */}
+              <div style={{
+                background:vercelState==="ready"?C.green:vercelState==="error"?C.red:vercelState==="building"?"#2563eb":"#E0B846",
+                padding:"10px 16px",display:"flex",alignItems:"center",gap:10
+              }}>
+                {/* Animated spinner for in-progress states */}
+                {(vercelState==="pushing"||vercelState==="queued"||vercelState==="building")&&(
+                  <div style={{width:16,height:16,border:"2.5px solid rgba(255,255,255,0.4)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.8s linear infinite",flexShrink:0}}/>
+                )}
+                {vercelState==="ready"&&<span style={{color:"#fff",fontSize:"1rem"}}>✓</span>}
+                {vercelState==="error"&&<span style={{color:"#fff",fontSize:"1rem"}}>✕</span>}
+                <span style={{color:"#fff",fontWeight:700,fontSize:"0.88rem"}}>
+                  {vercelState==="pushing"?"Pushing to GitHub…":
+                   vercelState==="queued"?"Vercel: Deployment queued…":
+                   vercelState==="building"?"Vercel: Building…":
+                   vercelState==="ready"?"Vercel: Deployment live":
+                   "Vercel: Build error"}
+                </span>
+                <button style={{marginLeft:"auto",background:"none",border:"none",color:"rgba(255,255,255,0.7)",cursor:"pointer",fontSize:"0.9rem"}} onClick={()=>{setVercelState("idle");setVercelMsg("");}}>✕</button>
+              </div>
+              {/* Progress steps */}
+              <div style={{background:C.white,padding:"12px 16px"}}>
+                <div style={{display:"flex",gap:0,marginBottom:8}}>
+                  {[
+                    {key:"pushing",  label:"Push to GitHub"},
+                    {key:"queued",   label:"Vercel Queue"},
+                    {key:"building", label:"Build"},
+                    {key:"ready",    label:"Live"},
+                  ].map((step,i)=>{
+                    const order=["pushing","queued","building","ready","error"];
+                    const stepIdx=order.indexOf(step.key);
+                    const curIdx=order.indexOf(vercelState==="error"?"error":vercelState);
+                    const done=curIdx>stepIdx||(vercelState==="ready"&&stepIdx<=3);
+                    const active=vercelState===step.key;
+                    const failed=vercelState==="error";
+                    return(
+                      <div key={step.key} style={{flex:1,display:"flex",flexDirection:"column" as const,alignItems:"center",gap:4}}>
+                        <div style={{display:"flex",alignItems:"center",width:"100%"}}>
+                          {i>0&&<div style={{flex:1,height:2,background:done?C.green:C.milkDark,transition:"background 0.4s"}}/>}
+                          <div style={{
+                            width:24,height:24,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
+                            fontSize:"0.72rem",fontWeight:700,flexShrink:0,
+                            background:failed&&active?"#ef4444":done?C.green:active?"#2563eb":C.milkDark,
+                            color:done||active?"#fff":"#aaa",
+                            transition:"all 0.3s"
+                          }}>
+                            {done&&!active?"✓":failed&&active?"✕":i+1}
+                          </div>
+                          {i<3&&<div style={{flex:1,height:2,background:done?C.green:C.milkDark,transition:"background 0.4s"}}/>}
+                        </div>
+                        <span style={{fontSize:"0.68rem",color:done?C.green:active?"#2563eb":"#aaa",fontWeight:done||active?700:400,textAlign:"center" as const}}>{step.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {vercelMsg&&<p style={{fontSize:"0.78rem",color:vercelState==="error"?C.red:vercelState==="ready"?C.green:"#555",margin:0,lineHeight:1.5}}>{vercelMsg}</p>}
+                {vercelState==="error"&&(
+                  <a href="https://vercel.com/dashboard" target="_blank" rel="noreferrer"
+                    style={{display:"inline-block",marginTop:8,fontSize:"0.78rem",color:"#2563eb",textDecoration:"underline"}}>
+                    Open Vercel Dashboard →
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* CSS for spinner */}
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
           {/* GitHub settings */}
           <div style={{...s.settBox,marginBottom:20}}>
             <button style={s.settToggle} onClick={()=>setGhOpen(o=>!o)}>GitHub Deploy Settings {ghOpen?"▲":"▼"}</button>
             {ghOpen&&(
               <div style={{padding:"20px 18px"}}>
-                {([{l:"GitHub Username",k:"owner",p:"e.g. PrinceAmadin"},{l:"Repository Name",k:"repo",p:"e.g. EduCraft-Ambassador"},{l:"Personal Access Token",k:"token",p:"ghp_xxxx…"}] as const).map(f=>(
+                <div style={{fontSize:"0.78rem",color:C.greenDark,fontWeight:700,marginBottom:12}}>GitHub Settings</div>
+                {([{l:"GitHub Username",k:"owner",p:"e.g. PrinceAmadin"},{l:"Repository Name",k:"repo",p:"e.g. EduCraft-Ambassador"},{l:"GitHub Personal Access Token",k:"token",p:"ghp_xxxx…"}] as const).map(f=>(
                   <div key={f.k} style={{marginBottom:12}}>
                     <label style={s.fLabel}>{f.l}</label>
                     <input style={s.fInp} type={f.k==="token"?"password":"text"} placeholder={f.p} value={gh[f.k]} onChange={e=>setGh({...gh,[f.k]:e.target.value})}/>
                   </div>
                 ))}
-                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{lsSet(LS_G,gh);setGhOpen(false);setDepMsg("Settings saved.");}}>Save</button>
+                <div style={{marginTop:16,paddingTop:16,borderTop:`1px solid ${C.milkDark}`}}>
+                  <div style={{fontSize:"0.78rem",color:C.greenDark,fontWeight:700,marginBottom:8}}>Vercel Settings (for live deploy status)</div>
+                  <div style={{background:C.milk,border:`1px solid ${C.milkDark}`,borderLeft:`3px solid #2563eb`,borderRadius:4,padding:"10px 14px",marginBottom:12,fontSize:"0.78rem",color:"#555",lineHeight:1.7}}>
+                    To get your Vercel token:<br/>
+                    1. Go to <a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" style={{color:"#2563eb"}}>vercel.com/account/tokens</a><br/>
+                    2. Click "Create" → name it "EduCraft" → copy the token<br/>
+                    3. Paste it below. Your project name is shown in Vercel dashboard URL.
+                  </div>
+                  <div style={{marginBottom:12}}>
+                    <label style={s.fLabel}>Vercel API Token</label>
+                    <input style={s.fInp} type="password" placeholder="Paste your Vercel token here" value={gh.vercelToken||""} onChange={e=>setGh({...gh,vercelToken:e.target.value})}/>
+                  </div>
+                  <div style={{marginBottom:12}}>
+                    <label style={s.fLabel}>Vercel Project Name</label>
+                    <input style={s.fInp} placeholder="e.g. educraft-ambassador" value={gh.vercelProject||""} onChange={e=>setGh({...gh,vercelProject:e.target.value})}/>
+                  </div>
+                </div>
+                <button style={{...s.actBtn,background:C.green,color:C.white}} onClick={()=>{lsSet(LS_G,gh);setGhOpen(false);setDepMsg("Settings saved.");}}>Save All Settings</button>
               </div>
             )}
           </div>
