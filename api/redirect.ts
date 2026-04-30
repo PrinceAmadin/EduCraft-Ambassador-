@@ -141,28 +141,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // ── General Ambassador (client referral link) ──────────────────────────────
   const slot = SLOTS[id];
 
-  // Slot not in static file — check Redis for approved ambassadors (added via application form)
-  if (!slot) {
-    const redisUrl = process.env.REDIS_URL;
-    if (redisUrl) {
-      try {
-        const { createClient } = await import("redis");
-        const client = createClient({ url: redisUrl });
-        client.on("error", () => {});
-        await client.connect();
-        const profileStr = await client.get(`profile:${id}`);
-        await client.disconnect();
-        if (profileStr) {
-          const profile = JSON.parse(profileStr) as { name?: string };
+  // Always check Redis first for an approved profile — this takes precedence over the static file.
+  // Reason: when an ambassador is approved via the application form, they are in Redis but their
+  // static slot entry may still show as vacant/unnamed. Redis is the source of truth.
+  const redisUrl = process.env.REDIS_URL;
+  if (redisUrl) {
+    try {
+      const { createClient } = await import("redis");
+      const client = createClient({ url: redisUrl });
+      client.on("error", () => {});
+      await client.connect();
+      const profileStr = await client.get(`profile:${id}`);
+      await client.disconnect();
+      if (profileStr) {
+        const profile = JSON.parse(profileStr) as { name?: string };
+        // Only use Redis profile if it has a real name (not vacant)
+        if (profile.name && profile.name.trim()) {
           void trackClick(id);
-          const msg = profile.name
-            ? `Hi EduCraft! I was referred by ${profile.name}. I'd like to place an order on the following Services:`
-            : "Hi EduCraft! I'd like to place an order on the following Services:";
+          const msg = `Hi EduCraft! I was referred by ${profile.name}. I'd like to place an order on the following Services:`;
           res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(msg)}`);
           return;
         }
-      } catch { /* fall through to 404 */ }
-    }
+      }
+    } catch { /* fall through to static slot */ }
+  }
+
+  // No Redis profile — use static SLOTS list
+  if (!slot) {
     res.status(404).send(errPage("❌ Not Found", "This ambassador link does not exist. Please contact EduCraft."));
     return;
   }

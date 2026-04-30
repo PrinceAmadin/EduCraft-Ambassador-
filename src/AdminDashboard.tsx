@@ -96,6 +96,63 @@ export default function AdminDashboard(){
     return()=>{window.removeEventListener("resize",hr);window.removeEventListener("scroll",hs);};
   },[]);
 
+  // Payment records
+  interface PaymentRecord { slotId:string;name:string;bankName:string;accountNumber:string;accountName:string;email?:string;phone?:string;universityFull?:string;universityAbbr?:string;approvedAt?:string;updatedAt?:string; }
+  const[paymentRecords,setPaymentRecords]=useState<PaymentRecord[]>([]);
+
+  // ── Secret / auth ────────────────────────────────────────────────────────────
+  const[secret,setSecretRaw]=useState<string>(()=>lsGet(LS_S)??"");
+  const setAdminSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
+  const[tempSecret,setTempSecret]=useState("");
+  const[settOpen,setSettOpen]=useState(false);
+
+  // Startup sync: fetch approved ambassadors from Redis and merge into liveData.
+  // This ensures any device (mobile, laptop) shows newly approved ambassadors
+  // without needing a GitHub deploy or page-specific localStorage.
+  useEffect(()=>{
+    if(!secret)return; // wait until secret is entered on this device
+    fetch(`/api/admin?action=sync-data&secret=${encodeURIComponent(secret)}`)
+      .then(r=>r.ok?r.json():null)
+      .then((d:{profiles:Record<string,{name:string;school:string;email?:string}>;payments:Record<string,Record<string,string>>}|null)=>{
+        if(!d||!d.profiles)return;
+        // Merge approved profiles into slots
+        setDataRaw(prev=>{
+          const merged={...prev.slots};
+          let changed=false;
+          Object.entries(d.profiles).forEach(([id,profile])=>{
+            const existing=merged[id];
+            // Update if: slot doesn't exist, is vacant, or has no name
+            if(!existing||existing.status==="vacant"||!existing.name){
+              merged[id]={name:profile.name||existing?.name||"",school:profile.school||existing?.school||"",status:"active" as const};
+              changed=true;
+            }
+          });
+          if(!changed)return prev;
+          const next={...prev,slots:merged};
+          lsSet(LS_D,next);
+          return next;
+        });
+        // Merge payment records
+        if(d.payments&&Object.keys(d.payments).length>0){
+          setPaymentRecords(Object.values(d.payments).map(v=>v as unknown as PaymentRecord));
+        }
+        // Update tracking stats with registered names/emails
+        setStats((prev:Record<string,Stat>)=>{
+          const next={...prev};
+          Object.entries(d.profiles).forEach(([id,profile])=>{
+            next[id]={
+              clicks:prev[id]?.clicks??0,
+              orders:prev[id]?.orders??0,
+              email:(d.profiles[id] as {email?:string;name:string;school:string}).email??prev[id]?.email??null,
+              registeredName:profile.name??prev[id]?.registeredName??null,
+            };
+          });
+          return next;
+        });
+      })
+      .catch(()=>{/* sync failure is silent — stale data is fine */});
+  },[secret]); // re-runs when admin secret is entered
+
   // ── Manage ───────────────────────────────────────────────────────────────────
   const[editId,setEditId]=useState<string|null>(null);
   const[editName,setEditName]=useState("");const[editSchool,setEditSchool]=useState("");const[editSt,setEditSt]=useState<"active"|"vacant">("active");
@@ -125,10 +182,6 @@ export default function AdminDashboard(){
   // ── Tracking ─────────────────────────────────────────────────────────────────
   const[stats,setStats]=useState<Record<string,Stat>>({});
   const[sLoad,setSLoad]=useState(false);const[sErr,setSErr]=useState("");
-  const[secret,setSecretRaw]=useState<string>(()=>lsGet(LS_S)??"");
-  const setAdminSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
-  const[tempSecret,setTempSecret]=useState("");
-  const[settOpen,setSettOpen]=useState(false);
   const[tSearch,setTSearch]=useState("");
 
   // Pending
@@ -177,9 +230,7 @@ export default function AdminDashboard(){
   // Reset slot registration
   const[resetId,setResetId]=useState<string|null>(null);
 
-  // Payment records
-  interface PaymentRecord { slotId:string;name:string;bankName:string;accountNumber:string;accountName:string;email?:string;phone?:string;universityFull?:string;universityAbbr?:string;approvedAt?:string;updatedAt?:string; }
-  const[paymentRecords,setPaymentRecords]=useState<PaymentRecord[]>([]);
+  // Payment records (interface & state declared above, before sync useEffect)
   const[payLoading,setPayLoading]=useState(false);
   const[editPayId,setEditPayId]=useState<string|null>(null);
   const[payForm,setPayForm]=useState<Partial<PaymentRecord>>({});
@@ -474,7 +525,25 @@ export default function AdminDashboard(){
   };
 
   const startEdit=(id:string)=>{const sl=data.slots[id];setEditId(id);setEditName(sl.name);setEditSchool(sl.school);setEditSt(sl.status);};
-  const saveEdit=()=>{if(!editId)return;setData({...data,slots:{...data.slots,[editId]:{name:editName,school:editSchool,status:editSt}}});setEditId(null);};
+  const saveEdit=()=>{
+    if(!editId)return;
+    setData({...data,slots:{...data.slots,[editId]:{name:editName,school:editSchool,status:editSt}}});
+    // When marking a slot vacant — clear their Redis profile and payment record
+    if(editSt==="vacant"){
+      fetch("/api/admin?action=clear-ambassador",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({slotId:editId,adminSecret:secret})})
+        .catch(()=>{});
+      // Also clear from local tracking stats
+      setStats((prev:Record<string,Stat>)=>{
+        const n={...prev};
+        if(n[editId]){n[editId]={...n[editId],email:null,registeredName:null};}
+        return n;
+      });
+      // Remove from payment records list
+      setPaymentRecords(prev=>prev.filter(p=>p.slotId!==editId.padStart(3,"0")));
+    }
+    setEditId(null);
+  };
   const saveNew=()=>{const id=newId.trim().padStart(3,"0");if(!id){setAddErr("Slot ID required.");return;}if(!newName.trim()){setAddErr("Name required.");return;}if(data.slots[id]){setAddErr(`Slot ${id} already exists.`);return;}setData({...data,slots:{...data.slots,[id]:{name:newName.trim(),school:newSchool.trim(),status:newSt}}});setAddOpen(false);setAddErr("");};
 
   const nextEccaId=():string=>{
@@ -522,6 +591,11 @@ export default function AdminDashboard(){
     setData({...data,coreAmbassadors:data.coreAmbassadors.map(c=>
       c.id===editCoreId?{...c,name:ecName.trim(),school:ecSchool.trim(),percentage:ecPct,status:ecStatus}:c
     )});
+    if(ecStatus==="vacant"){
+      fetch("/api/admin?action=clear-ambassador",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({slotId:editCoreId,adminSecret:secret})}).catch(()=>{});
+      setStats((prev:Record<string,Stat>)=>{const n={...prev};if(n[editCoreId]){n[editCoreId]={...n[editCoreId],email:null,registeredName:null};}return n;});
+    }
     setEditCoreId(null);setEcErr("");
   };
 
@@ -537,6 +611,11 @@ export default function AdminDashboard(){
     setData({...data,subAmbassadors:data.subAmbassadors.map(s=>
       s.id===editSubId?{...s,name:esName.trim(),school:esSchool.trim(),coreId:coreFullId,status:esStatus}:s
     )});
+    if(esStatus==="vacant"){
+      fetch("/api/admin?action=clear-ambassador",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({slotId:editSubId,adminSecret:secret})}).catch(()=>{});
+      setStats((prev:Record<string,Stat>)=>{const n={...prev};if(n[editSubId]){n[editSubId]={...n[editSubId],email:null,registeredName:null};}return n;});
+    }
     setEditSubId(null);setEsErr("");
   };
 

@@ -375,6 +375,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         break;
       }
 
+      // ── SYNC DATA (for cross-device dashboard sync) ─────────────────────────
+      // Returns all approved profiles so any device can build the full ambassador list
+      case "sync-data": {
+        const client = await redisClient();
+        const approvedIds = await client.sMembers("approved_ids");
+        if (approvedIds.length === 0) { await client.disconnect(); res.status(200).json({ profiles: {}, payments: {} }); return; }
+        const [profileStrs, paymentStrs] = await Promise.all([
+          Promise.all(approvedIds.map(id => client.get(`profile:${id}`).then(s => ({ id, s })))),
+          Promise.all(approvedIds.map(id => client.get(`payment:${id}`).then(s => ({ id, s })))),
+        ]);
+        await client.disconnect();
+        const profiles: Record<string, { name: string; school: string; email: string }> = {};
+        profileStrs.forEach(({ id, s }) => {
+          if (s) { try { profiles[id.padStart(3,"0")] = JSON.parse(s); } catch {} }
+        });
+        const payments: Record<string, Record<string, string>> = {};
+        paymentStrs.forEach(({ id, s }) => {
+          if (s) { try { payments[id.padStart(3,"0")] = JSON.parse(s); } catch {} }
+        });
+        res.status(200).json({ profiles, payments });
+        break;
+      }
+
+      // ── CLEAR AMBASSADOR (when slot is made vacant) ──────────────────────────
+      // Clears Redis profile + payment record but keeps click/order history
+      case "clear-ambassador": {
+        const { slotId="" } = body;
+        if (!slotId.trim()) { res.status(400).json({ error: "slotId is required." }); return; }
+        const id = slotId.trim().toUpperCase().padStart ? slotId.trim().padStart(3,"0") : slotId.trim();
+        const client = await redisClient();
+        await client.multi()
+          .del(`profile:${id}`)
+          .sRem("approved_ids", id)
+          .exec();
+        // Also clear payment record
+        await client.del(`payment:${id}`);
+        await client.sRem("payment_ids", id);
+        await client.disconnect();
+        res.status(200).json({ success: true, message: `Ambassador profile and payment details for slot ${id} cleared.` });
+        break;
+      }
+
       // ── PAYMENT RECORDS ───────────────────────────────────────────────────────
       case "payment-records": {
         const client = await redisClient();
