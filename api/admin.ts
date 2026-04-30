@@ -403,7 +403,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       case "clear-ambassador": {
         const { slotId="" } = body;
         if (!slotId.trim()) { res.status(400).json({ error: "slotId is required." }); return; }
-        const id = slotId.trim().toUpperCase().padStart ? slotId.trim().padStart(3,"0") : slotId.trim();
+        const id = slotId.trim().padStart(3, "0");
         const client = await redisClient();
         await client.multi()
           .del(`profile:${id}`)
