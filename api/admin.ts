@@ -65,8 +65,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // Public actions — no auth required
   const PUBLIC_ACTIONS = ["get-next-slot"];
   if (!PUBLIC_ACTIONS.includes(action)) {
-    const expected = process.env.ADMIN_SECRET ?? "";
-    if (expected && secret !== expected) {
+    const expected = (process.env.ADMIN_SECRET ?? "").trim();
+    // Fail-closed: if ADMIN_SECRET is not configured, block ALL protected actions.
+    if (!expected) {
+      res.status(500).json({ error: "ADMIN_SECRET is not configured on this server." });
+      return;
+    }
+    if (secret.trim() !== expected) {
       res.status(401).json({ error: "Unauthorized. Check your Admin Secret." });
       return;
     }
@@ -297,11 +302,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       }
 
       // ── CHECK ENV ───────────────────────────────────────────────────────────
+      // Also used as the login password-verification endpoint by App.tsx.
+      // Must return { ok: true } on correct password — anything else denies access.
       case "check-env": {
+        const expected = (process.env.ADMIN_SECRET ?? "").trim();
+
+        // Fail safe: if no secret has been configured, nobody gets in.
+        if (!expected) {
+          res.status(500).json({ ok: false, error: "ADMIN_SECRET is not configured on this server." });
+          return;
+        }
+
+        // Constant-time comparison — prevents timing attacks.
+        const submitted = (secret ?? "").trim();
+        let diff = submitted.length !== expected.length ? 1 : 0;
+        const len = Math.max(submitted.length, expected.length);
+        for (let i = 0; i < len; i++) {
+          diff |= (submitted.charCodeAt(i) ?? 0) ^ (expected.charCodeAt(i) ?? 0);
+        }
+        const passwordCorrect = diff === 0;
+
+        if (!passwordCorrect) {
+          res.status(401).json({ ok: false });
+          return;
+        }
+
+        // ✅ Correct password — return env status for the admin dashboard.
         res.status(200).json({
+          ok:                 true,
           REDIS_URL:          process.env.REDIS_URL          ? "SET" : "MISSING",
           GMAIL_APP_PASSWORD: process.env.GMAIL_APP_PASSWORD ? "SET" : "MISSING",
-          ADMIN_SECRET:       process.env.ADMIN_SECRET        ? "SET" : "MISSING",
+          ADMIN_SECRET:       "SET",
           VERCEL_ENV:         process.env.VERCEL_ENV          ?? "unknown",
         });
         break;

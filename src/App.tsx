@@ -5,9 +5,9 @@ import RegisterPage   from "./RegisterPage";
 import ApplyPage      from "./ApplyPage";
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const SESSION_KEY  = "ec_admin_verified";   // sessionStorage key
-const MAX_ATTEMPTS = 5;                      // lockout after this many wrong tries
-const LOCKOUT_MS   = 15 * 60 * 1000;        // 15 minutes
+const SESSION_KEY  = "ec_admin_verified";
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MS   = 15 * 60 * 1000;
 const LOCKOUT_KEY  = "ec_lockout_until";
 const ATTEMPTS_KEY = "ec_login_attempts";
 
@@ -32,7 +32,6 @@ function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
   const [lockedUntil, setLockedUntil] = useState<number>(0);
   const [countdown,   setCountdown]   = useState(0);
 
-  // Restore lockout state from localStorage on mount
   useEffect(() => {
     const until = parseInt(localStorage.getItem(LOCKOUT_KEY) ?? "0", 10);
     const att   = parseInt(localStorage.getItem(ATTEMPTS_KEY) ?? "0", 10);
@@ -40,7 +39,6 @@ function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
     setAttempts(att);
   }, []);
 
-  // Live countdown ticker
   useEffect(() => {
     if (lockedUntil <= Date.now()) { setCountdown(0); return; }
     const tick = () => {
@@ -64,44 +62,58 @@ function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
     if (isLocked || loading || !password.trim()) return;
     setLoading(true);
     setError("");
+
+    // ── FAIL CLOSED: any outcome that is not an explicit 200 OK from our
+    //    API is treated as a wrong password.  A missing route, a network
+    //    error, a 404, a 500 — all of them count as a failed attempt and
+    //    never open the dashboard.
+    let succeeded = false;
+
     try {
-      // Verify password against the backend — the secret never lives in the
-      // frontend bundle. The API already has authCheck() which returns 401
-      // when the adminSecret does not match ADMIN_SECRET env var.
       const res = await fetch("/api/admin?action=check-env", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ adminSecret: password.trim() }),
       });
 
-      if (res.ok) {
-        // ✅ Correct — clear counters and open the dashboard for this tab only
-        localStorage.removeItem(ATTEMPTS_KEY);
-        localStorage.removeItem(LOCKOUT_KEY);
-        setAttempts(0);
-        sessionStorage.setItem(SESSION_KEY, "1"); // clears when tab is closed
-        onSuccess();
-      } else {
-        // ❌ Wrong password — track attempts and lock if needed
-        const next = attempts + 1;
-        setAttempts(next);
-        localStorage.setItem(ATTEMPTS_KEY, String(next));
-        if (next >= MAX_ATTEMPTS) {
-          const until = Date.now() + LOCKOUT_MS;
-          localStorage.setItem(LOCKOUT_KEY, String(until));
-          setLockedUntil(until);
-          setError("Too many incorrect attempts. Locked for 15 minutes.");
-        } else {
-          const left = MAX_ATTEMPTS - next;
-          setError(`Incorrect password. ${left} attempt${left === 1 ? "" : "s"} remaining.`);
+      // Only accept an explicit HTTP 200.  401 = wrong password.
+      // Anything else (404 route missing, 500 crash, 302 redirect, …) is
+      // also treated as failure — we never grant access on ambiguity.
+      if (res.status === 200) {
+        // Double-check the body so a misconfigured CDN can't spoof a 200.
+        const json = await res.json().catch(() => null);
+        if (json && json.ok === true) {
+          succeeded = true;
         }
-        setPassword("");
       }
     } catch {
-      setError("Network error — check your connection and try again.");
-    } finally {
-      setLoading(false);
+      // Network failure, CORS error, JSON parse error — all denied.
+      succeeded = false;
     }
+
+    if (succeeded) {
+      localStorage.removeItem(ATTEMPTS_KEY);
+      localStorage.removeItem(LOCKOUT_KEY);
+      setAttempts(0);
+      sessionStorage.setItem(SESSION_KEY, "1");
+      onSuccess();
+    } else {
+      const next = attempts + 1;
+      setAttempts(next);
+      localStorage.setItem(ATTEMPTS_KEY, String(next));
+      if (next >= MAX_ATTEMPTS) {
+        const until = Date.now() + LOCKOUT_MS;
+        localStorage.setItem(LOCKOUT_KEY, String(until));
+        setLockedUntil(until);
+        setError("Too many incorrect attempts. Locked for 15 minutes.");
+      } else {
+        const left = MAX_ATTEMPTS - next;
+        setError(`Incorrect password. ${left} attempt${left === 1 ? "" : "s"} remaining.`);
+      }
+      setPassword("");
+    }
+
+    setLoading(false);
   }, [password, isLocked, loading, attempts, onSuccess]);
 
   const onKey = (e: React.KeyboardEvent) => { if (e.key === "Enter") handleSubmit(); };
@@ -216,11 +228,9 @@ function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
 export default function App() {
   const path = window.location.pathname;
 
-  // Public routes — no auth needed
   if (path === "/register" || path.startsWith("/register/")) return <RegisterPage />;
   if (path === "/apply"    || path.startsWith("/apply/"))    return <ApplyPage />;
 
-  // Admin dashboard — gated behind password
   const [authed, setAuthed] = useState<boolean>(() =>
     sessionStorage.getItem(SESSION_KEY) === "1"
   );
