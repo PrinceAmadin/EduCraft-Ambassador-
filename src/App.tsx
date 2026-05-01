@@ -23,7 +23,7 @@ const C = {
 };
 
 // ── Login Gate ───────────────────────────────────────────────────────────────
-function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
+function AdminLoginGate({ onSuccess }: { onSuccess: (pw: string) => void }) {
   const [password,    setPassword]    = useState("");
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(false);
@@ -96,7 +96,7 @@ function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
       localStorage.removeItem(LOCKOUT_KEY);
       setAttempts(0);
       sessionStorage.setItem(SESSION_KEY, "1");
-      onSuccess();
+      onSuccess(password.trim());
     } else {
       const next = attempts + 1;
       setAttempts(next);
@@ -234,9 +234,20 @@ export default function App() {
   const [authed, setAuthed] = useState<boolean>(() =>
     sessionStorage.getItem(SESSION_KEY) === "1"
   );
+  // Store login password in sessionStorage so AdminDashboard can use it
+  // without requiring the admin to type it a second time.
+  const [loginPassword, setLoginPassword] = useState<string>(() =>
+    sessionStorage.getItem("ec_admin_pw") ?? ""
+  );
 
-  if (!authed) return <AdminLoginGate onSuccess={() => setAuthed(true)} />;
-  return <AdminDashboard />;
+  const handleSuccess = (pw: string) => {
+    sessionStorage.setItem("ec_admin_pw", pw);
+    setLoginPassword(pw);
+    setAuthed(true);
+  };
+
+  if (!authed) return <AdminLoginGate onSuccess={handleSuccess} />;
+  return <AdminDashboard initialSecret={loginPassword} />;
 }
 
 // ── Shared styles ─────────────────────────────────────────────────────────────

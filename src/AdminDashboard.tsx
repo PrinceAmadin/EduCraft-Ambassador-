@@ -97,7 +97,7 @@ function naira(n:number):string{
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-export default function AdminDashboard(){
+export default function AdminDashboard({initialSecret=""}:{initialSecret?:string}){
   // ── Shared state ────────────────────────────────────────────────────────────
   const[data,setDataRaw]=useState<AmbassadorData>(()=>lsGet(LS_D)??{...seedAmbassadors});
   const setData=useCallback((d:AmbassadorData)=>{setDataRaw(d);lsSet(LS_D,d);},[]);
@@ -157,8 +157,10 @@ export default function AdminDashboard(){
   // ── Tracking ─────────────────────────────────────────────────────────────────
   const[stats,setStats]=useState<Record<string,Stat>>({});
   const[sLoad,setSLoad]=useState(false);const[sErr,setSErr]=useState("");
-  const[secret,setSecretRaw]=useState<string>(()=>lsGet(LS_S)??"");
+  const[secret,setSecretRaw]=useState<string>(()=>initialSecret||lsGet(LS_S)??"");
   const setAdminSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
+  // Persist the login password into localStorage so all API calls work immediately
+  useEffect(()=>{if(initialSecret){setSecretRaw(initialSecret);lsSet(LS_S,initialSecret);}},[initialSecret]);
   const[tempSecret,setTempSecret]=useState("");
   const[settOpen,setSettOpen]=useState(false);
   const[tSearch,setTSearch]=useState("");
