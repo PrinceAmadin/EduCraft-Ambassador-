@@ -69,12 +69,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // Public actions — no auth required
   const PUBLIC_ACTIONS = ["get-next-slot", "debug-auth"];
   if (!PUBLIC_ACTIONS.includes(action)) {
-    const expected = (process.env.ADMIN_SECRET ?? "").trim();
-    // Fail-closed: if ADMIN_SECRET is not configured, block ALL protected actions.
-    if (!expected) {
-      res.status(500).json({ error: "ADMIN_SECRET is not configured on this server." });
-      return;
-    }
+    // Use env var if set, otherwise fall back to hardcoded fallback password.
+    // Change FALLBACK_PASSWORD below to whatever you want to log in with.
+    const FALLBACK_PASSWORD = "EduCraft@Admin2025";
+    const expected = (process.env.ADMIN_SECRET ?? "").trim() || FALLBACK_PASSWORD;
     if (secret.trim() !== expected) {
       res.status(401).json({ error: "Unauthorized. Check your Admin Secret." });
       return;
