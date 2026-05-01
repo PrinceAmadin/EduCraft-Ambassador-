@@ -60,13 +60,10 @@ function genSlotsBlock(d:AmbassadorData):string{
   return `const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {\n${lines}\n};`;
 }
 
-// Returns the Unix-ms timestamp recorded just before the push so the Vercel
-// poller can ignore any deployment that was created before this moment.
-async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<number>{
-  const pushedAt=Date.now();
+async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,log:(m:string)=>void):Promise<void>{
   const h={"Authorization":`token ${token}`,"Accept":"application/vnd.github.v3+json","Content-Type":"application/json"};
   const base=`https://api.github.com/repos/${owner}/${repo}/contents`;
-  const b64=(s:string)=>btoa(unescape(encodeURIComponent(s)));
+  const b64=(s:string)=>{const bytes=new TextEncoder().encode(s);let bin="";bytes.forEach(b=>{bin+=String.fromCharCode(b);});return btoa(bin);};
   const getFile=async(p:string)=>{const r=await fetch(`${base}/${p}`,{headers:h});if(!r.ok)throw new Error(`Cannot read ${p} in repo`);const j=await r.json();return{sha:j.sha as string,content:atob((j.content as string).replace(/\n/g,""))};};
   const put=async(p:string,c:string,s:string)=>{const r=await fetch(`${base}/${p}`,{method:"PUT",headers:h,body:JSON.stringify({message:"EduCraft Admin deploy",content:b64(c),sha:s})});if(!r.ok){const e=await r.json();throw new Error(e.message||`Failed ${p}`);}};
 
@@ -86,8 +83,8 @@ async function deploy(owner:string,repo:string,token:string,data:AmbassadorData,
   const newRedirect=rContent.substring(0,slotsStart)+genSlotsBlock(data)+rContent.substring(slotsEnd);
   await put("api/redirect.ts",newRedirect,rS);
 
-  log("Both files pushed to GitHub.");
-  return pushedAt;
+  log("Both files pushed to GitHub. Vercel is rebuilding now.");
+  log("Monitor: https://vercel.com/dashboard → educraft-ambassador → Deployments");
 }
 
 function nextId(slots:Record<string,AmbassadorSlot>):string{
@@ -648,115 +645,48 @@ export default function AdminDashboard(){
 
   const doDeploy=async()=>{
     if(!gh.owner||!gh.repo||!gh.token){setGhOpen(true);setDepMsg("Fill in GitHub settings first.");return;}
-    setDep("busy");setDepMsg("Starting…");setVercelState("pushing");setVercelMsg("Pushing files to GitHub…");
+    setDep("busy");setDepMsg("Starting…");setVercelState("pushing");setVercelMsg("Pushing to GitHub…");
     try{
-      // pushedAt is recorded BEFORE the push so we can ignore older deployments
-      const pushedAt=await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);
+      await deploy(gh.owner,gh.repo,gh.token,data,setDepMsg);
       setDep("ok");
-
+      // Begin Vercel status polling if token is provided
       if(gh.vercelToken&&gh.vercelProject){
-        setVercelState("queued");
-        setVercelMsg("GitHub push complete. Waiting for Vercel to pick up the build…");
-
-        // ── Polling strategy ──────────────────────────────────────────────────
-        // We fetch the latest deployments for the exact project name the user
-        // typed, then filter to only deployments whose createdAt >= pushedAt.
-        // This correctly handles:
-        //   • Two Vercel projects with similar names (e.g. educraft-ambassador vs
-        //     edu-craft-ambassador) — we only look at the one in the settings field.
-        //   • A CANCELED state on an older deployment being misread as our failure.
-        //   • Vercel not attaching githubCommitSha (common with content-API pushes).
+        setVercelState("queued");setVercelMsg("Waiting for Vercel to pick up the deployment…");
+        // Poll every 4 seconds for up to 3 minutes
         let attempts=0;
-        const maxAttempts=50; // 50 × 4s ≈ 3.5 min
-
+        const maxAttempts=45;
         const poll=async()=>{
           attempts++;
           try{
-            // Use projectSlug (exact name) + limit=5 so we catch the new one fast
-            const url=`https://api.vercel.com/v6/deployments?app=${encodeURIComponent(gh.vercelProject.trim())}&limit=5`;
-            const r=await fetch(url,{headers:{Authorization:`Bearer ${gh.vercelToken.trim()}`}});
-
-            if(!r.ok){
-              // 401 = bad token, 404 = wrong project name
-              const errBody=await r.json().catch(()=>({})) as Record<string,unknown>;
-              const hint=r.status===401?"Check your Vercel token in settings.":r.status===404?`Project "${gh.vercelProject}" not found — check the project name in settings.`:"Vercel API error.";
-              setVercelState("error");
-              setVercelMsg(`${hint} (HTTP ${r.status}${errBody.error?(": "+String((errBody.error as Record<string,string>).message||"")):""})` );
-              return;
-            }
-
-            const d2=await r.json() as {deployments?:Record<string,unknown>[]};
-            const list=d2.deployments??[];
-
-            // Only consider deployments created at or after our push
-            const ours=list.filter(dep=>{
-              const created=typeof dep.createdAt==="number"?dep.createdAt:parseInt(String(dep.createdAt??"0"),10);
-              return created>=pushedAt-5000; // 5s grace for clock skew
-            });
-
-            if(ours.length===0){
-              // Vercel hasn’t created the deployment yet — keep waiting
-              if(attempts<maxAttempts)setTimeout(poll,4000);
-              else{setVercelState("error");setVercelMsg("Timed out waiting for Vercel to start the build. The files were pushed to GitHub successfully — check the Vercel dashboard.");}
-              return;
-            }
-
-            // Pick the most recent matching deployment
-            const dep=ours[0];
-            const st:string=(dep.state??"") as string;
-
+            const r=await fetch(
+              `https://api.vercel.com/v6/deployments?app=${encodeURIComponent(gh.vercelProject)}&limit=1`,
+              {headers:{Authorization:`Bearer ${gh.vercelToken}`}}
+            );
+            if(!r.ok){setVercelState("error");setVercelMsg("Could not reach Vercel API. Check your Vercel token.");return;}
+            const d2=await r.json();
+            const latest=d2.deployments?.[0];
+            if(!latest){if(attempts<maxAttempts)setTimeout(poll,4000);return;}
+            const st:string=latest.state??"";
             if(st==="READY"){
               setVercelState("ready");
-              setVercelMsg("Build complete — your changes are live.");
-            }else if(st==="ERROR"){
+              setVercelMsg(`Live on Vercel · ${new Date().toLocaleTimeString()}`);
+            }else if(st==="ERROR"||st==="CANCELED"){
               setVercelState("error");
-              setVercelMsg("Vercel build failed. Open the Vercel dashboard → Logs for the full error.");
-            }else if(st==="CANCELED"){
-              // CANCELED usually means Vercel auto-cancelled a duplicate; a newer
-              // deployment of the same commit is likely already READY.
-              // Check if a newer one in the list is READY before reporting error.
-              const newerReady=list.find(d=>{
-                const created=typeof d.createdAt==="number"?d.createdAt:parseInt(String(d.createdAt??"0"),10);
-                return created>=pushedAt-5000&&(d.state as string)==="READY";
-              });
-              if(newerReady){
-                setVercelState("ready");
-                setVercelMsg("Build complete — your changes are live.");
-              }else{
-                // Truly canceled — keep polling for a sibling deployment
-                if(attempts<maxAttempts)setTimeout(poll,4000);
-              }
+              setVercelMsg(`Vercel build ${st.toLowerCase()}. Check Vercel dashboard for details.`);
             }else{
-              // BUILDING | INITIALIZING | QUEUED — still in progress
-              const stateMap:Record<string,VercelState>={BUILDING:"building",INITIALIZING:"building",QUEUED:"queued"};
-              const msgMap:Record<string,string>={
-                BUILDING:"Vercel is building the project…",
-                INITIALIZING:"Vercel is initializing the build environment…",
-                QUEUED:"Build is queued on Vercel…",
-              };
-              setVercelState(stateMap[st]??"building");
-              setVercelMsg(msgMap[st]??`Vercel status: ${st}…`);
+              // BUILDING, INITIALIZING, QUEUED
+              const label:Record<string,string>={BUILDING:"Building…",INITIALIZING:"Initializing…",QUEUED:"Queued…"};
+              setVercelState("building");
+              setVercelMsg(label[st]??`Status: ${st}…`);
               if(attempts<maxAttempts)setTimeout(poll,4000);
             }
-          }catch{
-            if(attempts<maxAttempts)setTimeout(poll,5000);
-          }
+          }catch{if(attempts<maxAttempts)setTimeout(poll,5000);}
         };
-
-        // Wait 8s for the GitHub push to register as a new Vercel deployment
-        setTimeout(poll,8000);
-
+        setTimeout(poll,6000); // wait 6s for GitHub→Vercel webhook to fire
       }else{
-        // No Vercel token — honest amber state, not false green
-        setVercelState("queued");
-        setVercelMsg("Pushed to GitHub successfully. Vercel will rebuild automatically (usually ~30s). Add a Vercel Token in GitHub settings to track live build status here.");
+        setVercelState("ready");setVercelMsg("Pushed to GitHub. Add Vercel Token in settings to see live status.");
       }
-    }catch(e){
-      setDep("fail");
-      setDepMsg((e as Error).message);
-      setVercelState("error");
-      setVercelMsg("Push to GitHub failed. Check your GitHub token and repo name in settings.");
-    }
+    }catch(e){setDep("fail");setDepMsg((e as Error).message);setVercelState("error");setVercelMsg("Push to GitHub failed.");}
   };
 
   // Nav tabs
