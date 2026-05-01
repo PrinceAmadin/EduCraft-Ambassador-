@@ -14,6 +14,10 @@ import nodemailer from "nodemailer";
 const ADMIN_EMAIL = "EduCraft611@gmail.com";
 const BASE_URL    = "https://edu-craft-ambassador.vercel.app";
 
+// ── Vercel config — ensure req.body is always parsed ─────────────────────────
+export const config = { api: { bodyParser: true } };
+
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 type RC = ReturnType<typeof createClient>;
 
@@ -301,33 +305,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         break;
       }
 
-      // ── CHECK ENV ───────────────────────────────────────────────────────────
-      // Also used as the login password-verification endpoint by App.tsx.
-      // Must return { ok: true } on correct password — anything else denies access.
+      // ── CHECK ENV ──────────────────────────────────────────────────────────
+      // Used as the login password-verification endpoint by App.tsx.
+      // Auth is already verified by the top-level guard above — if we reach
+      // this point the password is correct, so just return { ok: true }.
       case "check-env": {
-        const expected = (process.env.ADMIN_SECRET ?? "").trim();
-
-        // Fail safe: if no secret has been configured, nobody gets in.
-        if (!expected) {
-          res.status(500).json({ ok: false, error: "ADMIN_SECRET is not configured on this server." });
-          return;
-        }
-
-        // Constant-time comparison — prevents timing attacks.
-        const submitted = (secret ?? "").trim();
-        let diff = submitted.length !== expected.length ? 1 : 0;
-        const len = Math.max(submitted.length, expected.length);
-        for (let i = 0; i < len; i++) {
-          diff |= (submitted.charCodeAt(i) ?? 0) ^ (expected.charCodeAt(i) ?? 0);
-        }
-        const passwordCorrect = diff === 0;
-
-        if (!passwordCorrect) {
-          res.status(401).json({ ok: false });
-          return;
-        }
-
-        // ✅ Correct password — return env status for the admin dashboard.
         res.status(200).json({
           ok:                 true,
           REDIS_URL:          process.env.REDIS_URL          ? "SET" : "MISSING",
