@@ -67,7 +67,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const secret = (req.query.secret as string | undefined) ?? body.adminSecret ?? "";
 
   // Public actions — no auth required
-  const PUBLIC_ACTIONS = ["get-next-slot"];
+  const PUBLIC_ACTIONS = ["get-next-slot", "debug-auth"];
   if (!PUBLIC_ACTIONS.includes(action)) {
     const expected = (process.env.ADMIN_SECRET ?? "").trim();
     // Fail-closed: if ADMIN_SECRET is not configured, block ALL protected actions.
@@ -303,6 +303,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           `<div style="font-family:sans-serif;padding:24px"><h2 style="color:#0D5753">Email is working</h2><p>Environment: <strong>${process.env.VERCEL_ENV??"unknown"}</strong></p></div>`);
         res.status(ok?200:500).json({ success:ok, env:process.env.VERCEL_ENV??"unknown", message: ok?"Test email sent.":"Send failed — check Gmail App Password." });
         break;
+      }
+
+      // ── DEBUG AUTH (temporary — remove after login is confirmed working) ────
+      case "debug-auth": {
+        const expected = (process.env.ADMIN_SECRET ?? "");
+        const submitted = (body.adminSecret ?? "");
+        res.status(200).json({
+          // Never log the actual values — only metadata safe for debugging
+          env_secret_set:        expected.length > 0,
+          env_secret_length:     expected.length,
+          env_secret_first_char: expected.length > 0 ? expected.charCodeAt(0) : null,
+          env_secret_last_char:  expected.length > 0 ? expected.charCodeAt(expected.length - 1) : null,
+          env_secret_trimmed_length: expected.trim().length,
+          submitted_length:      submitted.length,
+          submitted_trimmed_len: submitted.trim().length,
+          submitted_first_char:  submitted.length > 0 ? submitted.charCodeAt(0) : null,
+          lengths_match:         submitted.trim().length === expected.trim().length,
+          match:                 submitted.trim() === expected.trim(),
+          body_keys:             Object.keys(body),
+          content_type:          req.headers["content-type"] ?? "none",
+        });
+        return;
       }
 
       // ── CHECK ENV ──────────────────────────────────────────────────────────
