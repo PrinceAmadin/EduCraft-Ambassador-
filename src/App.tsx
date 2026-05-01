@@ -231,9 +231,12 @@ export default function App() {
   if (path === "/register" || path.startsWith("/register/")) return <RegisterPage />;
   if (path === "/apply"    || path.startsWith("/apply/"))    return <ApplyPage />;
 
-  const [authed, setAuthed] = useState<boolean>(() =>
-    sessionStorage.getItem(SESSION_KEY) === "1"
-  );
+  const [authed, setAuthed] = useState<boolean>(() => {
+    const isAuthed = sessionStorage.getItem(SESSION_KEY) === "1";
+    // If no active session, wipe any stale stored secret so it can't be reused
+    if (!isAuthed) { try { localStorage.removeItem("ec_secret"); } catch {/**/} }
+    return isAuthed;
+  });
   // Store login password in sessionStorage so AdminDashboard can use it
   // without requiring the admin to type it a second time.
   const [loginPassword, setLoginPassword] = useState<string>(() =>

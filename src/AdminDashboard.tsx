@@ -157,10 +157,10 @@ export default function AdminDashboard({initialSecret=""}:{initialSecret?:string
   // ── Tracking ─────────────────────────────────────────────────────────────────
   const[stats,setStats]=useState<Record<string,Stat>>({});
   const[sLoad,setSLoad]=useState(false);const[sErr,setSErr]=useState("");
-  const[secret,setSecretRaw]=useState<string>(()=>initialSecret||(lsGet(LS_S)??""));
+  const[secret,setSecretRaw]=useState<string>(()=>{const stored=lsGet(LS_S)??"";return initialSecret||stored;});
   const setAdminSecret=(v:string)=>{setSecretRaw(v);lsSet(LS_S,v);};
-  // Persist the login password into localStorage so all API calls work immediately
-  useEffect(()=>{if(initialSecret){setSecretRaw(initialSecret);lsSet(LS_S,initialSecret);}},[initialSecret]);
+  // Persist login password to localStorage immediately so API calls work on first render
+  if(initialSecret&&initialSecret!==lsGet(LS_S)){lsSet(LS_S,initialSecret);}
   const[tempSecret,setTempSecret]=useState("");
   const[settOpen,setSettOpen]=useState(false);
   const[tSearch,setTSearch]=useState("");
