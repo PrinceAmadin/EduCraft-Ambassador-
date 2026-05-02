@@ -1,6 +1,6 @@
 // api/redirect.ts
 // Tracks EVERY click via Redis INCR then immediately redirects.
-// Click counter increments on every request — even repeated ones from the same person.
+// Click counter increments on every request â even repeated ones from the same person.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "redis";
@@ -8,7 +8,7 @@ import { createClient } from "redis";
 const EDUCRAFT_WHATSAPP = "2347063421088";
 
 const SLOTS: Record<string, { name: string; school: string; status: "active" | "vacant" }> = {
-  "001": { name: "Admins"              , school: "Admin"       , status: "active" },
+  "001": { name: "Admins"              , school: "Co-founders" , status: "active" },
   "002": { name: "Noruwosa Zoe"        , school: "UNIBEN"      , status: "active" },
   "003": { name: "Cassandra"           , school: "DELSU"       , status: "active" },
   "004": { name: "Marong"              , school: "EUI"         , status: "active" },
@@ -24,11 +24,11 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "014": { name: "Sultan"              , school: "EUI"         , status: "active" },
   "015": { name: "Taiwo"               , school: "EUI"         , status: "active" },
   "016": { name: "Aisosa (MLS)"        , school: "EUI"         , status: "active" },
-  "017": { name: ""                    , school: ""            , status: "vacant" },
-  "018": { name: ""                    , school: ""            , status: "vacant" },
-  "019": { name: ""                    , school: ""            , status: "vacant" },
-  "020": { name: ""                    , school: ""            , status: "vacant" },
-  "021": { name: ""                    , school: ""            , status: "vacant" },
+  "017": { name: "Okoyo Emmanuel"      , school: "ESUI"        , status: "active" },
+  "018": { name: "Dr Abel"             , school: "EUI"         , status: "active" },
+  "019": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "020": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "021": { name: ""                    , school: "EUI"         , status: "vacant" },
   "022": { name: "Blue Chief"          , school: "EUI"         , status: "active" },
   "023": { name: "Promzex"             , school: "EUI"         , status: "active" },
   "024": { name: "Confidence"          , school: "EUI"         , status: "active" },
@@ -43,8 +43,8 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "033": { name: "Gift"                , school: "EUI"         , status: "active" },
   "034": { name: "Doreen"              , school: "EUI"         , status: "active" },
   "035": { name: "David Salam"         , school: "EUI"         , status: "active" },
-  "036": { name: ""                    , school: ""            , status: "vacant" },
-  "037": { name: ""                    , school: ""            , status: "vacant" },
+  "036": { name: "Ayomide Bridget"     , school: "EUI"         , status: "active" },
+  "037": { name: "Ifekristi"           , school: "UNILAG"      , status: "active" },
   "038": { name: "Victory Teshua"      , school: "EUI"         , status: "active" },
   "039": { name: "Collins"             , school: "EUI"         , status: "active" },
   "040": { name: "Favy"                , school: "EUI"         , status: "active" },
@@ -52,14 +52,14 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "042": { name: "Aisosa"              , school: "EUI"         , status: "active" },
   "043": { name: "Engine Boy"          , school: "UNIBEN"      , status: "active" },
   "044": { name: "Adenike"             , school: "UNIBEN"      , status: "active" },
-  "045": { name: "Precious"            , school: "EUI"         , status: "active" },
+  "045": { name: "Precious"            , school: ""            , status: "active" },
   "046": { name: "Ayo (Bridget)"       , school: "EUI"         , status: "active" },
   "047": { name: "Raqeeb"              , school: "EUI"         , status: "active" },
   "048": { name: "Michael"             , school: "EUI"         , status: "active" },
-  "049": { name: ""                    , school: ""            , status: "vacant" },
+  "049": { name: ""                    , school: "EUI"         , status: "vacant" },
   "050": { name: "Joshua (COE)"        , school: "EUI"         , status: "active" },
-  "051": { name: ""                    , school: ""            , status: "vacant" },
-  "052": { name: ""                    , school: ""            , status: "vacant" },
+  "051": { name: "Guih"                , school: "VNKJ"        , status: "active" },
+  "052": { name: ""                    , school: "EUI"         , status: "vacant" },
   "053": { name: ""                    , school: "EUI"         , status: "vacant" },
   "054": { name: ""                    , school: "EUI"         , status: "vacant" },
   "055": { name: ""                    , school: "EUI"         , status: "vacant" },
@@ -68,6 +68,13 @@ const SLOTS: Record<string, { name: string; school: string; status: "active" | "
   "058": { name: ""                    , school: "EUI"         , status: "vacant" },
   "059": { name: ""                    , school: "EUI"         , status: "vacant" },
   "060": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "061": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "062": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "063": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "064": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "065": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "066": { name: ""                    , school: "EUI"         , status: "vacant" },
+  "ECSA-001-005": { name: "Alfred chioma"       , school: "SDU"         , status: "active" },
 };
 
 const CORE: Record<string, { name: string; school: string }> = {
@@ -85,7 +92,7 @@ const SUB: Record<string, { name: string; school: string; coreId: string }> = {
   "ECSA-001-003": { name: "Queensly", school: "EUI",         coreId: "ECCA-001" },
 };
 
-// Fire-and-forget click tracking — NEVER blocks or throws to the redirect
+// Fire-and-forget click tracking â NEVER blocks or throws to the redirect
 async function trackClick(id: string): Promise<void> {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) return;
@@ -93,7 +100,7 @@ async function trackClick(id: string): Promise<void> {
     const client = createClient({ url: redisUrl });
     client.on("error", () => {});
     await client.connect();
-    // INCR adds 1 every single time this runs — every click counts
+    // INCR adds 1 every single time this runs â every click counts
     await client.multi()
       .incr(`clicks:${id}`)
       .sAdd("ambassador_ids", id)
@@ -107,20 +114,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const type = req.query.type as string | undefined;
 
   if (!id) {
-    res.status(400).send(errPage("❌ Invalid Link", "No ambassador ID was provided."));
+    res.status(400).send(errPage("â Invalid Link", "No ambassador ID was provided."));
     return;
   }
 
-  // ── ECCA (Core Ambassador recruitment link) ────────────────────────────────
+  // ââ ECCA (Core Ambassador recruitment link) ââââââââââââââââââââââââââââââââ
   if (type === "ecca") {
     const core = CORE[id];
-    if (!core) { res.status(404).send(errPage("❌ Not Found", "This Core Ambassador link does not exist.")); return; }
+    if (!core) { res.status(404).send(errPage("â Not Found", "This Core Ambassador link does not exist.")); return; }
     void trackClick(id); // fire-and-forget
-    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was brought in by ${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. 🎓`)}`);
+    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was brought in by ${core.name}. I'd love to know more about the EduCraft Ambassadorship Program and how I can be a part of the brand. ð`)}`);
     return;
   }
 
-  // ── ECSA (Sub-Ambassador client referral link) ─────────────────────────────
+  // ââ ECSA (Sub-Ambassador client referral link) âââââââââââââââââââââââââââââ
   // URL format: /ECSA/ECSA-001-001 or /ECSA/-001-001
   // Internal key format: "ECSA-001-001"
   if (type === "ecsa") {
@@ -129,7 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const stripped = id.replace(/^ECSA-?/, "").replace(/^-/, "");
     const fullId   = `ECSA-${stripped}`;
 
-    // 1. Check Redis first — dynamically created sub-ambassadors live here
+    // 1. Check Redis first â dynamically created sub-ambassadors live here
     const redisUrl2 = process.env.REDIS_URL;
     if (redisUrl2) {
       try {
@@ -157,10 +164,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  // ── General Ambassador (client referral link) ──────────────────────────────
+  // ââ General Ambassador (client referral link) ââââââââââââââââââââââââââââââ
   const slot = SLOTS[id];
 
-  // Always check Redis first for an approved profile — this takes precedence over the static file.
+  // Always check Redis first for an approved profile â this takes precedence over the static file.
   // Reason: when an ambassador is approved via the application form, they are in Redis but their
   // static slot entry may still show as vacant/unnamed. Redis is the source of truth.
   const redisUrl = process.env.REDIS_URL;
@@ -185,9 +192,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     } catch { /* fall through to static slot */ }
   }
 
-  // No Redis profile — use static SLOTS list
+  // No Redis profile â use static SLOTS list
   if (!slot) {
-    res.status(404).send(errPage("❌ Not Found", "This ambassador link does not exist. Please contact EduCraft."));
+    res.status(404).send(errPage("â Not Found", "This ambassador link does not exist. Please contact EduCraft."));
     return;
   }
 
@@ -206,6 +213,6 @@ function errPage(title: string, body: string): string {
 .card{background:#fff;border:2px solid #E0B846;border-radius:16px;padding:48px 40px;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(13,87,83,.10)}
 .icon{font-size:2.5rem;margin-bottom:16px}h1{font-size:1.3rem;margin-bottom:12px;color:#ef4444}p{color:#0D5753;line-height:1.6;font-size:.95rem}
 .brand{margin-top:24px;font-size:.75rem;color:#12827c;font-weight:700;letter-spacing:.05em}</style></head>
-<body><div class="card"><div class="icon">🎓</div><h1>${title}</h1><p>${body}</p>
-<div class="brand">EDUCRAFT — Academic &amp; Technical Documentation Experts</div></div></body></html>`;
+<body><div class="card"><div class="icon">ð</div><h1>${title}</h1><p>${body}</p>
+<div class="brand">EDUCRAFT â Academic &amp; Technical Documentation Experts</div></div></body></html>`;
 }
