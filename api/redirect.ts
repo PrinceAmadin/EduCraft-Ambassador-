@@ -124,8 +124,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // URL format: /ECSA/ECSA-001-001 or /ECSA/-001-001
   // Internal key format: "ECSA-001-001"
   if (type === "ecsa") {
-    // Normalise: strip any leading "ECSA" then re-add it so both URL formats work
-    const stripped = id.replace(/^ECSA-?/, "");
+    // Normalise ID to always be "ECSA-001-001" format.
+    // URL may arrive as "-001-001" (leading dash) or "ECSA-001-001" or "001-001"
+    const stripped = id.replace(/^ECSA-?/, "").replace(/^-/, "");
     const fullId   = `ECSA-${stripped}`;
 
     // 1. Check Redis first — dynamically created sub-ambassadors live here
