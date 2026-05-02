@@ -30,18 +30,24 @@ async function redisClient(): Promise<RC> {
   return c;
 }
 
-async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+async function sendEmail(to: string, subject: string, html: string): Promise<{ok:boolean;error?:string}> {
   const pass = process.env.GMAIL_APP_PASSWORD;
-  if (!pass) return false;
+  if (!pass) return { ok: false, error: "GMAIL_APP_PASSWORD is not set in Vercel environment variables." };
+  const cleanPass = pass.replace(/\s/g, "");
   try {
     const t = nodemailer.createTransport({
       host: "smtp.gmail.com", port: 465, secure: true,
-      auth: { user: ADMIN_EMAIL, pass },
-      socketTimeout: 15000, connectionTimeout: 10000,
+      auth: { user: ADMIN_EMAIL, pass: cleanPass },
+      socketTimeout: 20000, connectionTimeout: 15000,
     });
+    await t.verify();
     await t.sendMail({ from: `"EduCraft" <${ADMIN_EMAIL}>`, to, subject, html });
-    return true;
-  } catch (e) { console.error("Email error:", e); return false; }
+    return { ok: true };
+  } catch (e) {
+    const msg = (e instanceof Error) ? e.message : String(e);
+    console.error("Email error:", msg);
+    return { ok: false, error: msg };
+  }
 }
 
 function authCheck(body: Record<string, string>, res: VercelResponse): boolean {
@@ -65,6 +71,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const action = (req.query.action as string | undefined) ?? "";
   const body   = (req.body ?? {}) as Record<string, string>;
   const secret = (req.query.secret as string | undefined) ?? body.adminSecret ?? "";
+
+  // verify-admin: strict login gate — always checks secret
+  if (action === "verify-admin") {
+    const expected = (process.env.ADMIN_SECRET ?? "").trim() || "EduCraft@Admin2025";
+    if (secret.trim() !== expected) {
+      res.status(401).json({ error: "Incorrect password." });
+      return;
+    }
+    res.status(200).json({ ok: true });
+    return;
+  }
 
   // Public actions — no auth required
   const PUBLIC_ACTIONS = ["get-next-slot", "debug-auth"];
@@ -140,8 +157,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
             const amount = parseFloat(jobAmount.replace(/,/g,""))||0;
             const pct = parseFloat(commissionPercent)||10;
             const commission = amount > 0 ? amount*(pct/100) : 0;
-            emailSent = await sendEmail(emailTo, "EduCraft — Commission Notification", commissionHtml(profile.name, jobDesc.trim(), amount, pct, commission));
-            emailReason = emailSent ? "sent" : "send_failed";
+            const emailRes = await sendEmail(emailTo, "EduCraft — Commission Notification", commissionHtml(profile.name, jobDesc.trim(), amount, pct, commission));
+            emailSent = emailRes.ok;
+            emailReason = emailRes.ok ? "sent" : "send_failed";
           }
         }
         res.status(200).json({ success:true, emailSent, emailTo, emailReason });
@@ -164,13 +182,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           let link = `${baseUrl}/EduCraftA/${id}`;
           if (id.startsWith("ECCA-")) link = `${baseUrl}/ECCA/${id}`;
           if (id.startsWith("ECSA-")) link = `${baseUrl}/ECSA/${id}`;
-          const emailSent = await sendEmail(profile.email, "EduCraft — Your Ambassador Account is Now Active", welcomeHtml(profile.name, id, link));
-          res.status(200).json({ success:true, action:"approved", name:profile.name, email:profile.email, emailSent });
+          const emailResult = await sendEmail(profile.email, "EduCraft — Your Ambassador Account is Now Active", welcomeHtml(profile.name, id, link));
+          res.status(200).json({ success:true, action:"approved", name:profile.name, email:profile.email, emailSent: emailResult.ok });
         } else {
           await client.multi().del(`pending:${id}`).sRem("pending_ids",id).exec();
           await client.disconnect();
-          const emailSent = await sendEmail(profile.email, "EduCraft — Ambassador Registration Update", rejectionHtml(profile.name, id, reason));
-          res.status(200).json({ success:true, action:"rejected", emailSent });
+          const emailResult2 = await sendEmail(profile.email, "EduCraft — Ambassador Registration Update", rejectionHtml(profile.name, id, reason));
+          res.status(200).json({ success:true, action:"rejected", emailSent: emailResult2.ok });
         }
         break;
       }
@@ -267,7 +285,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         let sent = 0, failed = 0;
         const body2 = message.replace(/\n/g, "<br/>");
         for (const email of emails) {
-          const ok = await sendEmail(email, subject.trim(), broadcastHtml(subject.trim(), body2));
+          const emailResult3 = await sendEmail(email, subject.trim(), broadcastHtml(subject.trim(), body2));
+          const ok = emailResult3.ok;
           ok ? sent++ : failed++;
         }
         res.status(200).json({ success:true, sent, failed, total:emails.length });
@@ -286,20 +305,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         if (!profileStr) { res.status(404).json({ error: "This ambassador has not registered their email yet." }); return; }
         const profile = JSON.parse(profileStr) as { name:string; email:string };
         if (!profile.email) { res.status(404).json({ error: "No email found for this ambassador." }); return; }
-        const ok = await sendEmail(profile.email, title.trim(), messageHtml(profile.name, title.trim(), message.trim()));
+        const emailResult4 = await sendEmail(profile.email, title.trim(), messageHtml(profile.name, title.trim(), message.trim()));
+        const ok = emailResult4.ok;
         res.status(200).json({ success:ok, sentTo:profile.email, name:profile.name });
         break;
       }
 
       // ── TEST EMAIL ──────────────────────────────────────────────────────────
       case "test-email": {
-        if (!process.env.GMAIL_APP_PASSWORD) {
-          res.status(503).json({ error:"GMAIL_APP_PASSWORD is not set in this environment.", env:process.env.VERCEL_ENV??"unknown" });
-          return;
+        const result = await sendEmail(
+          ADMIN_EMAIL,
+          "EduCraft — Email Test Successful",
+          `<div style="font-family:sans-serif;padding:24px;max-width:480px"><h2 style="color:#0D5753">✅ Email is working</h2><p style="color:#333;line-height:1.6">Your Gmail App Password is correctly configured.</p><p style="color:#888;font-size:0.85rem;margin-top:16px">Environment: <strong>${process.env.VERCEL_ENV??"unknown"}</strong></p></div>`
+        );
+        if (result.ok) {
+          res.status(200).json({ success: true, env: process.env.VERCEL_ENV??"unknown", message: "Test email sent successfully to " + ADMIN_EMAIL });
+        } else {
+          res.status(503).json({
+            success: false,
+            env: process.env.VERCEL_ENV??"unknown",
+            error: result.error ?? "Unknown error",
+            hint: (result.error??"").includes("Invalid login") || (result.error??"").includes("535")
+              ? "Gmail rejected the login. Use a Gmail App Password (not your regular password). Go to myaccount.google.com/apppasswords — 2-Step Verification must be ON first."
+              : (result.error??"").includes("GMAIL_APP_PASSWORD")
+              ? "GMAIL_APP_PASSWORD is not set in Vercel. Go to Vercel → Settings → Environment Variables, add it, then redeploy."
+              : (result.error??"").includes("ECONNREFUSED") || (result.error??"").includes("ETIMEDOUT")
+              ? "Could not connect to Gmail SMTP. Temporary Vercel network issue — try again in a minute."
+              : "Check your Gmail App Password is correct and 2-Step Verification is enabled.",
+          });
         }
-        const ok = await sendEmail(ADMIN_EMAIL, "EduCraft — Email Test Successful",
-          `<div style="font-family:sans-serif;padding:24px"><h2 style="color:#0D5753">Email is working</h2><p>Environment: <strong>${process.env.VERCEL_ENV??"unknown"}</strong></p></div>`);
-        res.status(ok?200:500).json({ success:ok, env:process.env.VERCEL_ENV??"unknown", message: ok?"Test email sent.":"Send failed — check Gmail App Password." });
         break;
       }
 
@@ -377,8 +411,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           .exec();
         await client.disconnect();
         const link = `${baseUrl}/EduCraftA/${id}`;
-        const emailSent = await sendEmail(finalEmail, "Welcome to EduCraft — Your Ambassador Account is Active", welcomeAppHtml(finalName, id, link, finalAbbr));
-        res.status(200).json({ success:true, slotId:id, name:finalName, email:finalEmail, link, emailSent });
+        const emailResult5 = await sendEmail(finalEmail, "Welcome to EduCraft — Your Ambassador Account is Active", welcomeAppHtml(finalName, id, link, finalAbbr));
+        res.status(200).json({ success:true, slotId:id, name:finalName, email:finalEmail, link, emailSent: emailResult5.ok });
         break;
       }
 
@@ -399,9 +433,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           .exec();
         await client.disconnect();
         const rBlock = reason.trim() ? `<div style="background:#fafafa;border-left:4px solid #ccc;padding:12px 16px;margin:16px 0;color:#555;font-size:.88rem">${reason}</div>` : "";
-        const emailSent = await sendEmail(app.email, "EduCraft Ambassador Application — Update",
+        const emailResult6 = await sendEmail(app.email, "EduCraft Ambassador Application — Update",
           `<div style="font-family:sans-serif;padding:32px;max-width:480px"><h2 style="color:#0D5753">Application Update</h2><p>Dear <strong>${app.fullName}</strong>,</p><p>Thank you for applying. After review, we are unable to proceed at this time.</p>${rBlock}<p>Please contact your EduCraft coordinator if you have questions.</p><p style="font-size:.75rem;color:#888;margin-top:24px">EDUCRAFT — Academic & Technical Documentation Experts</p></div>`);
-        res.status(200).json({ success:true, emailSent });
+        res.status(200).json({ success:true, emailSent: emailResult6.ok });
         break;
       }
 

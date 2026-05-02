@@ -2018,21 +2018,39 @@ function SC({label,v,clr,bg}:{label:string;v:number|string;clr:string;bg:string}
 function TestEmailButton({secret,C:CC,s:ss}:{secret:string;C:Record<string,string>;s:Record<string,React.CSSProperties>}){
   const[st,setSt]=useState<"idle"|"busy"|"ok"|"fail">("idle");
   const[msg,setMsg]=useState("");
+  const[hint,setHint]=useState("");
   const test=async()=>{
-    setSt("busy");setMsg("");
+    setSt("busy");setMsg("");setHint("");
     try{
       const r=await fetch("/api/admin?action=test-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({adminSecret:secret})});
       const d=await r.json();
-      if(!r.ok)throw new Error(d.error||"Failed");
-      setSt("ok");setMsg(`OK · env: ${d.env}`);
-    }catch(e){setSt("fail");setMsg((e as Error).message.substring(0,80));}
-    setTimeout(()=>{setSt("idle");setMsg("");},7000);
+      if(r.ok&&d.success){
+        setSt("ok");
+        setMsg(`✅ Test email sent successfully to ${d.message?.split("to ")[1]||"admin"}.`);
+        setTimeout(()=>{setSt("idle");setMsg("");setHint("");},8000);
+      }else{
+        setSt("fail");
+        setMsg(d.error||"Send failed");
+        setHint(d.hint||"");
+        // Don’t auto-clear failures — admin needs to read the hint
+      }
+    }catch(e){
+      setSt("fail");
+      setMsg("Network error: "+(e as Error).message);
+      setHint("Check your internet connection and try again.");
+    }
   };
   return<div>
     <button style={{...ss.actBtn,background:st==="ok"?CC.green:st==="fail"?"#ef4444":"#555",color:CC.yellow,opacity:st==="busy"?0.7:1,fontSize:"0.82rem"}} onClick={test} disabled={st==="busy"}>
-      {st==="busy"?"Sending…":st==="ok"?"Email OK":"Test Email"}
+      {st==="busy"?"⏳ Sending…":st==="ok"?"✅ Email Sent":st==="fail"?"❌ Failed":"Test Email"}
     </button>
-    {msg&&<p style={{fontSize:"0.74rem",marginTop:5,color:st==="fail"?"#ef4444":CC.green,lineHeight:1.5,maxWidth:300}}>{msg}</p>}
+    {/* Error message */}
+    {msg&&<div style={{marginTop:8,padding:"10px 12px",borderRadius:6,background:st==="fail"?"#fef2f2":st==="ok"?"#f0fdf4":"#f9fafb",border:`1px solid ${st==="fail"?"#fca5a5":st==="ok"?"#86efac":"#e5e7eb"}`,maxWidth:340}}>
+      <p style={{fontSize:"0.78rem",color:st==="fail"?"#dc2626":st==="ok"?"#166534":"#374151",lineHeight:1.6,margin:0,fontWeight:600}}>{msg}</p>
+      {hint&&<p style={{fontSize:"0.74rem",color:"#6b7280",lineHeight:1.6,margin:"6px 0 0",borderTop:"1px solid #e5e7eb",paddingTop:6}}>
+        <strong style={{color:"#374151"}}>What to do:</strong> {hint}
+      </p>}
+    </div>}
   </div>;
 }
 
