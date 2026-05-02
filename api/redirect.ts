@@ -121,15 +121,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   // ── ECSA (Sub-Ambassador client referral link) ─────────────────────────────
-  // URL format: /ECSA/-001-001  →  id = "-001-001"
-  // Internal key format: "ECSA-001-001" — prepend "ECSA" to resolve
+  // URL format: /ECSA/ECSA-001-001 or /ECSA/-001-001
+  // Internal key format: "ECSA-001-001"
   if (type === "ecsa") {
-    const fullId = id.startsWith("ECSA") ? id : `ECSA${id}`;
+    // Normalise: strip any leading "ECSA" then re-add it so both URL formats work
+    const stripped = id.replace(/^ECSA-?/, "");
+    const fullId   = `ECSA-${stripped}`;
+
+    // 1. Check Redis first — dynamically created sub-ambassadors live here
+    const redisUrl2 = process.env.REDIS_URL;
+    if (redisUrl2) {
+      try {
+        const client2 = createClient({ url: redisUrl2 });
+        client2.on("error", () => {});
+        await client2.connect();
+        const subStr = await client2.get(`sub_profile:${fullId}`);
+        await client2.disconnect();
+        if (subStr) {
+          const subProfile = JSON.parse(subStr) as { name?: string };
+          if (subProfile.name?.trim()) {
+            void trackClick(fullId);
+            res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was referred by ${subProfile.name}. I'd like to place an order on the following Services:`)}`);
+            return;
+          }
+        }
+      } catch { /* fall through to static */ }
+    }
+
+    // 2. Fall back to hardcoded static list
     const sub = SUB[fullId];
     if (!sub) { res.status(404).send(errPage("Not Found", "This Sub-Ambassador link does not exist.")); return; }
     void trackClick(fullId);
-    const via = CORE[sub.coreId] ? ` (via ${CORE[sub.coreId].name})` : "";
-    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was referred by ${sub.name}${via}. I'd like to place an order on the following Services:`)}`);
+    res.redirect(302, `https://wa.me/${EDUCRAFT_WHATSAPP}?text=${enc(`Hi EduCraft! I was referred by ${sub.name}. I'd like to place an order on the following Services:`)}`);
     return;
   }
 

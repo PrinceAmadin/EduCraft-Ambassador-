@@ -425,6 +425,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       }
 
       // ── GET NEXT SLOT ───────────────────────────────────────────────────────
+      // ── SAVE SUB-AMBASSADOR ─────────────────────────────────────────────────
+      // Persists a dynamically created sub-ambassador to Redis so their
+      // referral link (/ECSA/ECSA-XXX-XXX) works immediately.
+      case "save-sub": {
+        const { subId="", name="", school="", coreId="" } = body;
+        if (!subId.trim()||!name.trim()||!coreId.trim()) {
+          res.status(400).json({ error:"subId, name, and coreId are required." }); return;
+        }
+        const client = await redisClient();
+        await client.set(`sub_profile:${subId.trim().toUpperCase()}`, JSON.stringify({
+          id: subId.trim().toUpperCase(),
+          name: name.trim(),
+          school: school.trim(),
+          coreId: coreId.trim().toUpperCase(),
+          createdAt: new Date().toISOString(),
+        }));
+        await client.sAdd("sub_ids", subId.trim().toUpperCase());
+        await client.disconnect();
+        res.status(200).json({ success:true, subId:subId.trim().toUpperCase() });
+        break;
+      }
+
       case "get-next-slot": {
         // existingSlots is passed from the frontend: [{id:"001",status:"active"|"vacant"}, ...]
         // Strategy:
